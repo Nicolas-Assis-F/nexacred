@@ -1,0 +1,3 @@
+ 'use client';
+import {SimpleResource,CreateForm,Field,Select} from '@/components/resource';
+export default function Users(){return <SimpleResource title="Usuários" subtitle="O acesso às ações é controlado pelo perfil do usuário." path="/users" columns={[["name","Nome"],["email","E-mail"],["role","Perfil"],["active","Ativo"]]}><CreateForm path="/users"><Field label="Nome" name="name"/><Field label="E-mail" name="email" type="email"/><Field label="Senha (mínimo 12 caracteres)" name="password" type="password"/><Select label="Perfil" name="role" options={['ADMIN','MANAGER','OPERATOR','COMPLIANCE','VIEWER'].map(id=>({id,name:id}))}/></CreateForm></SimpleResource>;}

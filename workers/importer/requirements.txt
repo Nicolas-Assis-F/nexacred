@@ -1,0 +1,7 @@
+boto3==1.40.35
+bullmq==2.16.2
+cryptography==46.0.1
+psycopg[binary]==3.2.10
+pyxlsb==1.0.10
+pytest==8.4.2
+phonenumbers==9.0.15

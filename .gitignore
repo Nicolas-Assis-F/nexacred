@@ -1,0 +1,16 @@
+node_modules
+dist
+.next
+coverage
+.env
+*.log
+uploads/*
+!uploads/.gitkeep
+workers/importer/.venv
+__pycache__
+.pytest_cache
+playwright-report
+test-results
+*.tsbuildinfo
+*.xlsb
+!fixtures/leads-synthetic.xlsb

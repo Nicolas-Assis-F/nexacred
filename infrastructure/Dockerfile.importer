@@ -1,0 +1,9 @@
+FROM python:3.13-slim
+WORKDIR /app/workers/importer
+COPY workers/importer/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY workers/importer .
+COPY infrastructure/entrypoint.sh /app/entrypoint.sh
+ENV PYTHONUNBUFFERED=1
+ENTRYPOINT ["sh", "/app/entrypoint.sh"]
+CMD ["python", "-m", "src.worker"]

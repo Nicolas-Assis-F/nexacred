@@ -1,0 +1,13 @@
+FROM node:24-alpine
+RUN apk add --no-cache openssl && corepack enable && corepack prepare pnpm@10.17.1 --activate
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json eslint.config.mjs ./
+COPY apps ./apps
+COPY packages ./packages
+COPY workers/sender ./workers/sender
+COPY infrastructure ./infrastructure
+RUN pnpm install --frozen-lockfile
+RUN pnpm db:generate && pnpm build
+ENV NODE_ENV=production
+ENTRYPOINT ["sh", "/app/infrastructure/entrypoint.sh"]
+EXPOSE 3000 3001

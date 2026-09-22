@@ -1,0 +1,393 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  OPERATOR
+  COMPLIANCE
+  VIEWER
+}
+enum ImportStatus {
+  UPLOADED
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+enum LeadStatus {
+  ACTIVE
+  INVALID
+  SUPPRESSED
+  ARCHIVED
+}
+enum ContactType {
+  PHONE
+  EMAIL
+}
+enum ContactStatus {
+  VALID
+  INVALID
+  SUPPRESSED
+}
+enum Channel {
+  SMS
+  EMAIL
+}
+enum ConsentStatus {
+  GRANTED
+  REVOKED
+  UNKNOWN
+}
+enum SuppressionReason {
+  OPT_OUT
+  BLOCKLIST
+  COMPLIANCE
+  INVALID
+  MANUAL
+}
+enum CampaignStatus {
+  DRAFT
+  APPROVED
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+enum RecipientStatus {
+  PENDING
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  RESPONDED
+  SUPPRESSED
+  CANCELLED
+}
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+enum MessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  RECEIVED
+}
+enum ConversationStatus {
+  NEW
+  INTERESTED
+  NOT_INTERESTED
+  QUALIFYING
+  QUALIFIED
+  WAITING_HUMAN
+  OPT_OUT
+  CLOSED
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         UserRole @default(VIEWER)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  approvedCampaigns Campaign[] @relation("CampaignApprover")
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+  auditLogs AuditLog[]
+}
+
+model Import {
+  id            String       @id @default(uuid()) @db.Uuid
+  filename      String
+  storageKey    String
+  sheetName     String?
+  mapping       Json
+  status        ImportStatus @default(UPLOADED)
+  totalRows     Int          @default(0)
+  processedRows Int          @default(0)
+  validRows     Int          @default(0)
+  invalidRows   Int          @default(0)
+  duplicateRows Int          @default(0)
+  errorMessage  String?
+  createdAt     DateTime     @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  errors ImportError[]
+  leads Lead[]
+  leadSources LeadSource[]
+  @@index([status, createdAt])
+}
+
+model ImportError {
+  id        String   @id @default(uuid()) @db.Uuid
+  importId  String   @db.Uuid
+  rowNumber Int
+  reason    String
+  details   Json?
+  createdAt DateTime @default(now())
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+  @@unique([importId, rowNumber])
+}
+
+model Lead {
+  id                  String     @id @default(uuid()) @db.Uuid
+  name                String
+  cpfEncrypted        String
+  cpfHash             String     @unique
+  cpfLast4            String
+  organization        String?
+  organizationCode    String?
+  employmentCode      String?
+  position            String?
+  employmentStatus    String?
+  marginBase          Decimal?   @db.Decimal(16, 2)
+  availableMargin     Decimal?   @db.Decimal(16, 2)
+  contractsCount      Int?
+  currentLoanDiscount Decimal?   @db.Decimal(16, 2)
+  sourceImportId      String?    @db.Uuid
+  sourceRow           Int?
+  status              LeadStatus @default(ACTIVE)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  sourceImport Import? @relation(fields: [sourceImportId], references: [id], onDelete: SetNull)
+  contacts LeadContact[]
+  consents Consent[]
+  suppressions Suppression[]
+  campaignRecipients CampaignRecipient[]
+  conversations Conversation[]
+  sources LeadSource[]
+  @@index([organization])
+  @@index([position])
+  @@index([employmentStatus])
+  @@index([availableMargin])
+  @@index([status])
+}
+
+model LeadSource {
+  id        String   @id @default(uuid()) @db.Uuid
+  leadId    String   @db.Uuid
+  importId  String   @db.Uuid
+  sourceRow Int
+  seenAt    DateTime @default(now())
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  import Import @relation(fields: [importId], references: [id], onDelete: Cascade)
+  @@unique([leadId, importId, sourceRow])
+}
+
+model LeadContact {
+  id             String        @id @default(uuid()) @db.Uuid
+  leadId         String        @db.Uuid
+  type           ContactType
+  valueEncrypted String
+  valueHash      String
+  maskedValue    String
+  status         ContactStatus @default(VALID)
+  isPrimary      Boolean       @default(false)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  consents Consent[]
+  suppressions Suppression[]
+  campaignRecipients CampaignRecipient[]
+  messages Message[]
+  conversations Conversation[]
+  @@unique([leadId, type, valueHash])
+  @@index([valueHash])
+  @@index([status, type])
+}
+
+model Consent {
+  id        String        @id @default(uuid()) @db.Uuid
+  leadId    String        @db.Uuid
+  contactId String?       @db.Uuid
+  channel   Channel
+  purpose   String
+  status    ConsentStatus
+  source    String
+  proof     Json?
+  grantedAt DateTime?
+  revokedAt DateTime?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contact LeadContact? @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  @@index([leadId, channel, purpose, status])
+}
+
+model Suppression {
+  id          String            @id @default(uuid()) @db.Uuid
+  leadId      String?           @db.Uuid
+  contactId   String?           @db.Uuid
+  identityHash String
+  channel     Channel?
+  reason      SuppressionReason
+  source      String
+  details     Json?
+  active      Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  removedAt   DateTime?
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  contact LeadContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  @@index([identityHash, active])
+  @@index([leadId, active])
+}
+
+model Segment {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  filters     Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  campaigns Campaign[]
+}
+
+model MessageTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  channel   Channel
+  subject   String?
+  body      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  campaigns Campaign[]
+}
+
+model Campaign {
+  id               String         @id @default(uuid()) @db.Uuid
+  name             String
+  channel          Channel
+  templateId       String         @db.Uuid
+  segmentId        String         @db.Uuid
+  status           CampaignStatus @default(DRAFT)
+  hourlyLimit      Int            @default(100)
+  dailyLimit       Int            @default(1000)
+  startAt          DateTime?
+  endAt            DateTime?
+  allowedStartHour Int            @default(9)
+  allowedEndHour   Int            @default(18)
+  preparedAt       DateTime?
+  requireConsent   Boolean        @default(true)
+  approvedById     String?        @db.Uuid
+  approvedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  template MessageTemplate @relation(fields: [templateId], references: [id])
+  segment Segment @relation(fields: [segmentId], references: [id])
+  approvedBy User? @relation("CampaignApprover", fields: [approvedById], references: [id])
+  recipients CampaignRecipient[]
+  messages Message[]
+  @@index([status, startAt])
+}
+
+model CampaignRecipient {
+  id          String          @id @default(uuid()) @db.Uuid
+  campaignId  String          @db.Uuid
+  leadId      String          @db.Uuid
+  contactId   String          @db.Uuid
+  identityHash String
+  status      RecipientStatus @default(PENDING)
+  reasons     Json?
+  queuedAt    DateTime?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  failedAt    DateTime?
+  respondedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead Lead @relation(fields: [leadId], references: [id])
+  contact LeadContact @relation(fields: [contactId], references: [id])
+  messages Message[]
+  @@unique([campaignId, contactId])
+  @@unique([campaignId, identityHash])
+  @@index([campaignId, status])
+}
+
+model Message {
+  id                 String           @id @default(uuid()) @db.Uuid
+  campaignId         String?          @db.Uuid
+  campaignRecipientId String?         @db.Uuid
+  contactId          String           @db.Uuid
+  conversationId     String?          @db.Uuid
+  provider           String
+  providerMessageId  String?          @unique
+  direction          MessageDirection
+  status             MessageStatus
+  body                String
+  errorCode           String?
+  metadata            Json?
+  createdAt           DateTime         @default(now())
+  sentAt              DateTime?
+  deliveredAt         DateTime?
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  recipient CampaignRecipient? @relation(fields: [campaignRecipientId], references: [id], onDelete: SetNull)
+  contact LeadContact @relation(fields: [contactId], references: [id])
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  @@index([conversationId, createdAt])
+  @@index([campaignId, status])
+}
+
+model Conversation {
+  id           String             @id @default(uuid()) @db.Uuid
+  leadId       String             @db.Uuid
+  contactId    String             @db.Uuid
+  channel      Channel
+  status       ConversationStatus @default(NEW)
+  assignedToId String?            @db.Uuid
+  chatwootId   Int?
+  note         String?
+  lastMessageAt DateTime           @default(now())
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  lead Lead @relation(fields: [leadId], references: [id])
+  contact LeadContact @relation(fields: [contactId], references: [id])
+  assignedTo User? @relation("ConversationAssignee", fields: [assignedToId], references: [id])
+  messages Message[]
+  @@unique([contactId, channel])
+  @@index([status, lastMessageAt])
+}
+
+model WebhookEvent {
+  id              String   @id @default(uuid()) @db.Uuid
+  provider        String
+  providerEventId String
+  eventType       String
+  payload         Json
+  processed       Boolean  @default(false)
+  processedAt     DateTime?
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+  @@unique([provider, providerEventId])
+  @@index([processed, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  action     String
+  entityType String
+  entityId   String?
+  requestId  String?
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}

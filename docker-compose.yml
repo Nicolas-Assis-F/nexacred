@@ -1,0 +1,137 @@
+name: nexacred
+x-node: &node
+  image: nexacred-node:local
+  build:
+    context: .
+    dockerfile: infrastructure/Dockerfile.node
+  env_file: .env
+  volumes:
+    - runtime_secrets:/run/nexacred:ro
+  init: true
+services:
+  secrets:
+    image: node:24-alpine
+    volumes:
+      - runtime_secrets:/run/nexacred
+      - ./infrastructure/init-secrets.mjs:/init-secrets.mjs:ro
+    command: node /init-secrets.mjs
+    restart: 'no'
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nexacred
+      POSTGRES_USER: nexacred
+      POSTGRES_PASSWORD: nexacred
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U nexacred -d nexacred']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports: ['127.0.0.1:${POSTGRES_PORT:-5432}:5432']
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports: ['127.0.0.1:${REDIS_PORT:-6379}:6379']
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-nexacred}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-local-development-storage}
+    volumes: [minio_data:/data]
+    healthcheck:
+      test: [CMD, mc, ready, local]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports: ['127.0.0.1:9000:9000','127.0.0.1:9001:9001']
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
+    depends_on:
+      minio: {condition: service_healthy}
+    env_file: .env
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - >-
+        mc alias set local http://minio:9000 "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}" &&
+        mc mb --ignore-existing "local/$${MINIO_BUCKET}" &&
+        if [ "$${STORAGE_RETENTION_DAYS}" -gt 0 ]; then
+        mc ilm rule add --expire-days "$${STORAGE_RETENTION_DAYS}" "local/$${MINIO_BUCKET}";
+        fi
+    restart: 'no'
+  migrate:
+    <<: *node
+    command: sh -c 'pnpm --filter @nexacred/database db:deploy && pnpm db:seed'
+    depends_on:
+      secrets: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+    restart: 'no'
+  api:
+    <<: *node
+    command: pnpm --filter @nexacred/api start:prod
+    ports: ['127.0.0.1:${API_PORT:-3001}:3001']
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, wget, '-qO-', 'http://127.0.0.1:3001/health/ready']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  web:
+    <<: *node
+    command: pnpm --filter @nexacred/web start
+    environment:
+      NODE_ENV: production
+    ports: ['127.0.0.1:${WEB_PORT:-3000}:3000']
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, '-qO-', 'http://127.0.0.1:3000/login']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  importer:
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.importer
+    env_file: .env
+    volumes: [runtime_secrets:/run/nexacred:ro]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    init: true
+    healthcheck:
+      test: [CMD, python, '-c', "import os; from redis import Redis; assert Redis.from_url(os.environ['REDIS_URL']).ping()"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  sender:
+    <<: *node
+    command: pnpm --filter @nexacred/sender start
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, '-e', "require('net').connect(6379,'redis').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  runtime_secrets:
