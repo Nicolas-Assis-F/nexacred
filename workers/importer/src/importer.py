@@ -2,12 +2,14 @@ import json
 import os
 import tempfile
 import uuid
+import unicodedata
 from pathlib import Path
 from typing import Any, Iterator
 import boto3
 import psycopg
 from .streaming_workbook import StreamingWorkbook as open_workbook
 from .crypto import EncryptionService
+from .errors import ImportInputError, describe_error
 from .normalization import identity_hmac, normalize_cpf, normalize_decimal, normalize_email, normalize_name, normalize_phone
 
 DEFAULT_MAPPING = {
@@ -17,6 +19,9 @@ DEFAULT_MAPPING = {
     "contractsCount": "QUANTIDADES CONTRATOS CONSIG", "currentLoanDiscount": "TOTAL DESCONTADO EMPRÉSTIMO",
 }
 
+def header_key(value):
+    return " ".join(unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode().upper().split())
+
 class XlsbImporter:
     def __init__(self) -> None:
         self.batch_size = min(2000, max(500, int(os.getenv("IMPORT_BATCH_SIZE", "1000"))))
@@ -25,23 +30,35 @@ class XlsbImporter:
         self.connection_string = os.environ["DATABASE_URL"].replace("?schema=public", "")
         self.s3 = boto3.client("s3", endpoint_url=f"http{'s' if os.getenv('MINIO_USE_SSL') == 'true' else ''}://{os.getenv('MINIO_ENDPOINT', 'minio')}:{os.getenv('MINIO_PORT', '9000')}", aws_access_key_id=os.getenv("MINIO_ACCESS_KEY"), aws_secret_access_key=os.getenv("MINIO_SECRET_KEY"), region_name="us-east-1")
 
-    def _rows(self, path: Path, sheet_name: str | None) -> Iterator[tuple[int, dict[str, Any]]]:
+    def _rows(self, path: Path, sheet_name: str | None, mapping=None) -> Iterator[tuple[int, dict[str, Any]]]:
         with open_workbook(str(path)) as workbook:
-            selected = sheet_name or workbook.sheets[0]
+            if not workbook.sheets: raise ImportInputError('A planilha não possui abas.')
+            requested = (sheet_name or '').strip()
+            selected = next((s for s in workbook.sheets if s.casefold() == requested.casefold()), None) if requested else workbook.sheets[0]
+            if selected is None: raise ImportInputError('A aba informada não existe. Confira o nome da aba no Excel.')
             with workbook.get_sheet(selected) as sheet:
                 iterator = sheet.rows()
                 header_row = next(iterator, None)
                 if header_row is None:
-                    return
+                    raise ImportInputError('A aba selecionada está vazia.')
                 headers = {cell.c: str(cell.v or "").strip() for cell in header_row}
+                keys = [header_key(h) for h in headers.values() if h]
+                if mapping:
+                    for field in ('cpf', 'name'):
+                        key = header_key(mapping[field])
+                        if key not in keys: raise ImportInputError(f'Cabeçalho obrigatório de {field} não encontrado. Corrija o mapeamento e envie novamente.')
+                        if keys.count(key) > 1: raise ImportInputError(f'Existem cabeçalhos duplicados para {field}. Renomeie a coluna na planilha.')
                 for row_number, row in enumerate(iterator, start=2):
                     yield row_number, {headers[cell.c]: cell.v for cell in row if cell.c in headers and headers[cell.c]}
 
     def _value(self, row: dict[str, Any], mapping: dict[str, str], field: str) -> Any:
         header = mapping.get(field)
-        return row.get(header) if header else None
+        if not header: return None
+        key = header_key(header)
+        return row.get(key)
 
     def _normalize(self, row: dict[str, Any], mapping: dict[str, str]) -> tuple[dict[str, Any] | None, str | None]:
+        row = {header_key(name): value for name, value in row.items()}
         cpf = normalize_cpf(self._value(row, mapping, "cpf"))
         name = normalize_name(self._value(row, mapping, "name"))
         if not cpf: return None, "CPF inválido"
@@ -117,10 +134,8 @@ class XlsbImporter:
                             cursor.executemany('INSERT INTO "ImportError" (id,"importId","rowNumber",reason,"createdAt") VALUES (%s,%s,%s,%s,now()) ON CONFLICT ("importId","rowNumber") DO NOTHING', errors)
                             cursor.execute('UPDATE "Import" SET "processedRows"=%s,"validRows"=%s,"invalidRows"=%s,"duplicateRows"=%s WHERE id=%s', (stats["processed"],stats["valid"],stats["invalid"],stats["duplicates"],import_id))
                         batch.clear(); errors.clear()
-                    for row_number, row in self._rows(path, result[1]):
+                    for row_number, row in self._rows(path, result[1], mapping):
                         if row_number - 1 <= skip_rows: continue
-                        if row_number == 2 and (mapping["cpf"] not in row or mapping["name"] not in row):
-                            raise ValueError("Missing required headers")
                         stats["processed"] += 1
                         try:
                             normalized, error = self._normalize(row, mapping)
@@ -139,8 +154,8 @@ class XlsbImporter:
                         cursor.execute('INSERT INTO "AuditLog" (id,action,"entityType","entityId","createdAt") VALUES (%s,\'IMPORT_COMPLETED\',\'Import\',%s,now())', (str(uuid.uuid4()),import_id))
                 if int(os.getenv("STORAGE_RETENTION_DAYS", "7")) == 0:
                     self.s3.delete_object(Bucket=os.getenv("MINIO_BUCKET", "imports"), Key=storage_key)
-            except Exception:
+            except Exception as error:
                 with conn.cursor() as cursor:
-                    cursor.execute('UPDATE "Import" SET status=\'FAILED\',"errorMessage"=\'Falha na leitura ou persistência. Verifique arquivo, aba e mapeamento.\' WHERE id=%s', (import_id,))
+                    cursor.execute('UPDATE "Import" SET status=\'FAILED\',"errorMessage"=%s WHERE id=%s', (describe_error(error), import_id))
                 raise RuntimeError("Import failed; see import status") from None
         return stats

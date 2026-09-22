@@ -1,0 +1,12 @@
+FROM node:24-bookworm-slim
+RUN corepack enable && corepack prepare pnpm@10.17.1 --activate
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json eslint.config.mjs ./
+COPY packages/shared ./packages/shared
+COPY packages/compliance ./packages/compliance
+COPY workers/whatsapp ./workers/whatsapp
+COPY infrastructure/entrypoint.sh ./entrypoint.sh
+RUN pnpm install --frozen-lockfile && pnpm -r build
+ENV NODE_ENV=production
+ENTRYPOINT ["sh", "/app/entrypoint.sh"]
+CMD ["pnpm", "--filter", "@nexacred/whatsapp-lab", "start"]

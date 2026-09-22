@@ -1,4 +1,5 @@
 import { Redis } from 'ioredis';
+import {TestingModule} from './testing/testing.module.js';
 import { AuditInterceptor } from './common/audit.interceptor.js';
 import { ErrorFilter } from './common/error.filter.js';
 import { Module } from '@nestjs/common';
@@ -59,6 +60,7 @@ import { UsersModule } from './users/users.module.js';
     AuditModule,
     HealthModule,
     UsersModule,
+    TestingModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -1,6 +1,6 @@
 # NexaCred
 
-Gestão de leads, importação XLSB, campanhas e atendimento com NestJS, Next.js, PostgreSQL, Prisma, Redis/BullMQ e Python. **Só o provider mock está habilitado:** não existe integração com WhatsApp nem envio real por SMS/e-mail.
+Gestão de leads, importação XLSB, campanhas e atendimento com NestJS, Next.js, PostgreSQL, Prisma, Redis/BullMQ e Python. Dashboard com métricas reais, filtros de período e interface responsiva. Campanhas usam o provider mock; um laboratório opcional com Baileys permite testes manuais de WhatsApp.
 
 ## Executar em desenvolvimento
 
@@ -24,7 +24,7 @@ O Compose espera PostgreSQL, MinIO e Redis, aplica migrations versionadas e exec
 
 ## Primeiro fluxo
 
-1. Entre no painel e importe uma `.xlsb`. Informe o nome da aba ou deixe vazio para a primeira; adapte o JSON de mapeamento aos cabeçalhos. CPF e nome são obrigatórios. O progresso é atualizado por lote.
+1. Entre no painel e importe uma `.xlsb`. Selecione o arquivo, informe a aba ou deixe vazio para a primeira e ajuste os campos visuais de mapeamento. CPF e nome são obrigatórios. Acompanhe upload e processamento; erros aparecem por linha. Importações que falharam podem ser retomadas enquanto o arquivo estiver retido no MinIO.
 2. Abra **Leads**, selecione uma pessoa e registre consentimento, data real, origem e referência da prova. Importação **não cria consentimento**.
 3. Crie um segmento e um template com o mesmo canal da campanha. `{{nome}}` é a variável permitida.
 4. Crie a campanha, veja o preview, aprove e confirme explicitamente o início. Use janela 0–24 para testar a qualquer hora. Janelas normais usam `America/Sao_Paulo`.
@@ -40,6 +40,7 @@ apps/api              REST, autenticação, RBAC, upload, auditoria
 apps/web              painel Next.js e proxy de sessão HttpOnly
 workers/importer      Python, XLSB incremental, lotes e checkpoints
 workers/sender        preparação, envio mock, webhooks, reconciliação
+workers/whatsapp      laboratório Baileys opcional, QR e testes manuais
 packages/database     schema, migrations, seed e consultas de domínio
 packages/shared       normalização, AES-GCM, HMAC, regras do bot
 packages/compliance   gate independente, sem acesso a fornecedor
@@ -84,6 +85,30 @@ O gate é reavaliado imediatamente antes de **cada** chamada ao provider, inclus
 Um advisory lock no PostgreSQL serializa decisões de envio e processamento de opt-out entre réplicas. Limites usam janelas móveis de 1 e 24 horas; frequência padrão de 24h entre campanhas. Pausa, horários e quotas adiam jobs sem consumir tentativas. Cancelamento bloqueia jobs pendentes. O mock usa IDs determinísticos entre reinicializações. Eventos atrasados não rebaixam uma entrega confirmada; webhooks são únicos por provider/eventId e aplicados atomicamente.
 
 **Limite deliberado:** serialização prioriza consistência em vez de alto throughput. Fornecedor real exige idempotência remota e reconciliação de resultado incerto antes de aumentar concorrência. A garantia do mock não equivale a exactly-once em uma rede externa.
+
+## Testar WhatsApp hoje (Baileys)
+
+O laboratório fica em **Relacionamento → Laboratório** e exige perfil ADMIN. Use números de participantes que autorizaram o teste. No `.env`, configure:
+
+```dotenv
+WHATSAPP_LAB_ENABLED=true
+WHATSAPP_TEST_NUMBERS=+5562999991234
+```
+
+Substitua o exemplo pelo número real de teste. É possível cadastrar até cinco números brasileiros, separados por vírgula. Depois:
+
+```bash
+docker compose --profile whatsapp-lab up --build -d
+docker compose --profile whatsapp-lab logs -f whatsapp-lab
+```
+
+Abra a tela, clique em **Conectar aparelho**, escaneie o QR em WhatsApp → Aparelhos conectados e escolha o destinatário. Confirme a autorização e envie a mensagem fixa. O histórico diferencia enviado, entregue, lido e resultado incerto. Em caso de timeout, repetir a tentativa usa o mesmo identificador; confira o aparelho antes de iniciar um novo teste. Não há reenvio automático.
+
+Limites globais do laboratório: 5 tentativas/hora e 20/dia, em janelas móveis. A lista autorizada, o consentimento e as supressões são verificados no servidor. Respostas de opt-out de destinatários identificados são persistidas. Mensagens com identidade LID sem telefone alternativo não são atribuídas: valide o recebimento de SAIR no aparelho antes de ampliar uso. Campanhas e conversas existentes continuam no mock; não são redirecionadas ao WhatsApp nem ao Chatwoot.
+
+O volume `whatsapp_session` contém credenciais de sessão e o histórico técnico de tentativas/supressões. Não o publique, compartilhe ou apague durante testes. Desconectar apaga somente a sessão e preserva bloqueios. O serviço não expõe porta pública e usa a chave interna gerada pelo ambiente. Execute uma única instância; o armazenamento de sessão em arquivos é para este laboratório, não para operação distribuída.
+
+Baileys 7.0.0-rc14 é uma dependência de pré-lançamento, não oficial, sujeita a alterações do WhatsApp, desconexões e restrições de conta. O laboratório não promete entrega nem substitui um provedor de produção. Requer conexão real e leitura do QR pelo operador; testes automatizados não enviam mensagens externas.
 
 ## Conversas e Chatwoot
 
@@ -159,4 +184,4 @@ Implemente `MessagingProvider` em `packages/messaging`: `send`, `parseWebhook` e
 
 ## Escopo atual
 
-Não há exportação em massa, recuperação de senha, multiempresa, atribuição automática por equipe, edição de campanha aprovada ou envio real. A interface permite janelas por hora; `startAt`/`endAt` também existem na API. O Chatwoot não é instalado pelo Compose. O serviço não é um mecanismo de decisão de crédito. Antes de usar dados reais, valide o fluxo integrado, capacidade e restauração no seu ambiente.
+Não há exportação em massa, recuperação de senha, multiempresa, atribuição automática por equipe, edição de campanha aprovada ou campanhas com envio real. O laboratório WhatsApp é manual e separado das campanhas. A interface permite janelas por hora; `startAt`/`endAt` também existem na API. O Chatwoot não é instalado pelo Compose. O serviço não é um mecanismo de decisão de crédito. Antes de usar dados reais, valide o fluxo integrado, capacidade e restauração no seu ambiente.

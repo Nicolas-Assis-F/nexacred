@@ -130,8 +130,27 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+  whatsapp-lab:
+    profiles: [whatsapp-lab]
+    build:
+      context: .
+      dockerfile: infrastructure/Dockerfile.whatsapp
+    env_file: .env
+    volumes:
+      - runtime_secrets:/run/nexacred:ro
+      - whatsapp_session:/data
+    depends_on:
+      secrets: {condition: service_completed_successfully}
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, '-e', "fetch('http://localhost:3010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   runtime_secrets:
+  whatsapp_session:

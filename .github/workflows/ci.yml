@@ -32,9 +32,12 @@ jobs:
       - run: docker compose up --build -d --wait --wait-timeout 300
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - run: docker compose --profile whatsapp-lab up --build -d --wait --wait-timeout 180 whatsapp-lab
+      - name: Verify isolated lab starts without connecting
+        run: docker compose exec -T whatsapp-lab node -e "fetch('http://localhost:3010/health').then(r=>{if(!r.ok)process.exit(1)})"
       - if: always()
         run: docker compose logs --no-color > compose.log
-      - if: failure()
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: diagnostics
@@ -43,4 +46,4 @@ jobs:
             test-results
             compose.log
       - if: always()
-        run: docker compose down
+        run: docker compose --profile whatsapp-lab down

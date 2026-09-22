@@ -45,6 +45,11 @@ export class ImportsController {
   @Get() list() {
     return this.service.list();
   }
+  @Post(':id/retry')
+  @RequirePermission('import:write')
+  retry(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.service.retry(id, req.user.id);
+  }
   @Get(':id') get(@Param('id') id: string) {
     return this.service.get(id);
   }
