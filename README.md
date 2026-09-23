@@ -1,6 +1,6 @@
 # NexaCred
 
-Gestão de leads, importação XLSB, campanhas e atendimento com NestJS, Next.js, PostgreSQL, Prisma, Redis/BullMQ e Python. Dashboard de analytics com métricas reais, filtros de período, funil de conversas e interface responsiva. Campanhas usam o provider mock; o laboratório com Baileys (habilitado por padrão) permite testes manuais de WhatsApp com mensagem própria.
+Gestão de leads, importação XLSB, campanhas e atendimento com NestJS, Next.js, PostgreSQL, Prisma, Redis/BullMQ e Python. Dashboard de analytics com métricas reais, filtros de período, funil de conversas e interface responsiva. WhatsApp usa Baileys para testes manuais, campanhas e respostas na inbox. SMS/e-mail continuam simulados. A página pública fica em `/`; após login o painel abre em `/dashboard`.
 
 ## Executar em desenvolvimento
 
@@ -32,7 +32,7 @@ O Compose espera PostgreSQL, MinIO e Redis, aplica migrations versionadas e exec
 2. Abra **Leads**, selecione uma pessoa e registre consentimento, data real, origem e referência da prova. Importação **não cria consentimento**.
 3. Crie um segmento e um template com o mesmo canal da campanha. `{{nome}}` é a variável permitida.
 4. Crie a campanha, veja o preview, aprove e confirme explicitamente o início. Use janela 0–24 para testar a qualquer hora. Janelas normais usam `America/Sao_Paulo`.
-5. O sender materializa destinatários, revalida elegibilidade, simula envio e gera entrega. Acesse **Conversas**, selecione o contato e simule `SIM` ou `SAIR`.
+5. O sender materializa destinatários e revalida elegibilidade: WhatsApp é enviado pelo aparelho conectado; SMS/e-mail são simulados. Acesse **Conversas**, selecione o contato e simule `SIM` ou `SAIR`.
 6. `SAIR`, `PARAR`, `CANCELAR`, `REMOVER` e `NÃO QUERO` registram supressão. Reimportar a pessoa não desfaz o bloqueio. Opt-outs não são removidos pelo painel.
 
 Há uma fixture sintética de 1.306 colunas em `fixtures/leads-synthetic.xlsb` para validar mapeamento, duplicação e linha inválida. É uma fixture mínima do parser, não um catálogo comercial.
@@ -43,12 +43,12 @@ Há uma fixture sintética de 1.306 colunas em `fixtures/leads-synthetic.xlsb` p
 apps/api              REST, autenticação, RBAC, upload, auditoria
 apps/web              painel Next.js e proxy de sessão HttpOnly
 workers/importer      Python, XLSB incremental, lotes e checkpoints
-workers/sender        preparação, envio mock, webhooks, reconciliação
-workers/whatsapp      laboratório Baileys opcional, QR e testes manuais
+workers/sender        preparação, envio WhatsApp/mock, webhooks, reconciliação
+workers/whatsapp      ponte Baileys, QR, sessão e registro durável de envios
 packages/database     schema, migrations, seed e consultas de domínio
 packages/shared       normalização, AES-GCM, HMAC, regras do bot
 packages/compliance   gate independente, sem acesso a fornecedor
-packages/messaging    port de providers e implementação mock
+packages/messaging    port de providers e implementações Baileys/mock
 infrastructure        imagens Docker e inicialização
 ```
 
@@ -63,7 +63,7 @@ flowchart TD
   Importer --> DB
   Queue --> Sender["Sender e webhooks"]
   Sender --> Gate["ComplianceGate"]
-  Gate --> Mock["Provider mock"]
+  Gate --> Provider["Baileys para WhatsApp / mock para SMS e e-mail"]
   Sender --> DB
   Sender --> Chatwoot["Chatwoot opcional: notas"]
 ```
@@ -90,37 +90,44 @@ Um advisory lock no PostgreSQL serializa decisões de envio e processamento de o
 
 **Limite deliberado:** serialização prioriza consistência em vez de alto throughput. Fornecedor real exige idempotência remota e reconciliação de resultado incerto antes de aumentar concorrência. A garantia do mock não equivale a exactly-once em uma rede externa.
 
-## Testar WhatsApp hoje (Baileys)
+## WhatsApp: conectar e enviar sem números no ambiente
 
-O laboratório fica em **Relacionamento → Laboratório** e exige perfil ADMIN. Ele já sobe com a stack (`make start`); só falta liberar um número autorizado para enviar. Passo a passo para testar hoje:
+1. Entre como ADMIN e abra **Central WhatsApp** (`/testing`). Clique em **Conectar WhatsApp**.
+2. No celular: WhatsApp → Aparelhos conectados → Conectar aparelho. Escaneie o QR, que é renovado automaticamente.
+3. Digite o telefone com DDD, escreva a mensagem e confirme a autorização do destinatário. Clique em **Enviar mensagem de teste**.
 
-1. No `.env`, informe o seu número (E.164). Até cinco, separados por vírgula:
+Não precisa configurar Meta, token comercial ou cadastrar destinatários no `.env`. `WHATSAPP_TEST_NUMBERS` é opcional e legado; a tela usa o telefone informado no formulário. O servidor normaliza o número e consulta seu JID no WhatsApp, evitando enviar para uma identidade incorreta quando o número brasileiro usa uma representação diferente no serviço.
 
-   ```dotenv
-   WHATSAPP_TEST_NUMBERS=+5562999991234
-   ```
+A sessão persiste no volume `whatsapp_session`; reiniciar o serviço restaura a conexão automaticamente. Quedas temporárias usam reconexão com espera progressiva; logout ou sessão aberta em outro serviço exigem ação do operador. O QR tem 320 px, contador e renovação automática. O laboratório requer ADMIN e limita testes a 5/h e 20/dia. Consentimento de teste não cria autorização de marketing. Supressões globais do banco e pedidos de saída recebidos pelo aparelho bloqueiam testes.
 
-2. Reinicie apenas o laboratório para carregar a allowlist:
+### Campanhas e atendimento reais
 
-   ```bash
-   make whatsapp          # equivale a: docker compose up --build -d whatsapp-lab
-   make whatsapp-logs     # acompanha a conexão (opcional)
-   ```
+- Em **Leads**, registre consentimento específico para **WhatsApp**, finalidade `CREDIT_MARKETING`, data, origem e prova. Consentimento de SMS não autoriza WhatsApp.
+- Em **Templates**, crie uma mensagem com canal WhatsApp. Use `{{nome}}`; a instrução de saída é adicionada automaticamente se ausente.
+- Em **Campanhas**, selecione WhatsApp, segmento e template compatíveis. Revise elegíveis/bloqueados, aprove e confirme o envio real (ADMIN/MANAGER). O início exige aparelho conectado.
+- A fila reavalia `ComplianceService` antes de cada chamada: lead/contato ativo, consentimento, supressões, janela em Brasília, limites e frequência. Não há escolha livre de provider pelo navegador.
+- A ponte aplica ainda limite global conservador de 20 tentativas/h e 100/dia para campanhas/atendimento, contando testes nesse total. As quotas da campanha podem ser menores. Sem conexão ou com quota esgotada, a fila aguarda sem consumir tentativas. Pausar mantém os jobs; cancelar impede novos envios.
+- Respostas reais aparecem em **Conversas**. `SAIR`, `PARAR` e demais expressões de opt-out bloqueiam imediatamente o número na ponte e são sincronizadas para supressão global e revogação no banco. Respostas manuais passam pelo mesmo gate.
 
-3. Abra **Laboratório**, clique em **Conectar aparelho** e escaneie o QR em WhatsApp → Aparelhos conectados.
-4. Escolha o destinatário, **escreva a mensagem que quer testar** (ou use a padrão), confirme a autorização e envie.
+### Entrega, idempotência e resultado incerto
 
-A linha “responda SAIR” é sempre anexada quando você não a inclui. O histórico diferencia enviado, entregue, lido e resultado incerto. Em caso de timeout, repetir a tentativa usa o mesmo identificador; confira o aparelho antes de iniciar um novo teste. Não há reenvio automático.
+O ID remoto deriva do destinatário materializado (ou da mensagem manual); não depende do ID de um job ou de uma transação que pode falhar. Antes de chamar Baileys, a ponte grava a tentativa no disco. Repetir o mesmo ID consulta a tentativa existente e rejeita troca de destinatário/conteúdo. Uma tentativa pendente na reinicialização vira **sem confirmação**; não há reenvio cego.
 
-Limites globais do laboratório: 5 tentativas/hora e 20/dia, em janelas móveis. A lista autorizada, o consentimento e as supressões são verificados no servidor. Respostas de opt-out de destinatários identificados são persistidas. Mensagens com identidade LID sem telefone alternativo não são atribuídas: valide o recebimento de SAIR no aparelho antes de ampliar uso. Campanhas e conversas existentes continuam no mock; não são redirecionadas ao WhatsApp nem ao Chatwoot.
+**Enviado** significa aceite do cliente; **Entregue/Lido** dependem dos recibos reais. Não se fabricam eventos de entrega no WhatsApp. Um timeout após o início do transporte gera `RESULT_UNCERTAIN`, sem retry automático, e pode ser reconciliado por um recibo posterior. Confira o aparelho antes de liberar uma nova tentativa na Central. Não há promessa de exactly-once remota.
 
-O volume `whatsapp_session` contém credenciais de sessão e o histórico técnico de tentativas/supressões. Não o publique, compartilhe ou apague durante testes. Desconectar apaga somente a sessão e preserva bloqueios. O serviço não expõe porta pública e usa a chave interna gerada pelo ambiente. Execute uma única instância; o armazenamento de sessão em arquivos é para este laboratório, não para operação distribuída.
+Eventos de entrada/entrega ficam em uma outbox cifrada e persistente. O sender verifica HMAC, grava no banco com chave única e só então confirma o recebimento. Grupos e broadcasts são ignorados; LIDs são resolvidos quando o WhatsApp fornece mapeamento de telefone. Mensagens sem telefone resolvível não podem ser atribuídas automaticamente.
 
-Baileys 7.0.0-rc14 é uma dependência de pré-lançamento, não oficial, sujeita a alterações do WhatsApp, desconexões e restrições de conta. O laboratório não promete entrega nem substitui um provedor de produção. Requer conexão real e leitura do QR pelo operador; testes automatizados não enviam mensagens externas.
+O volume contém credenciais e tentativas com telefone/texto cifrados. Não compartilhe nem apague esse volume em operação. Use apenas **uma instância** da ponte por sessão. Logs de protocolo e dumps de sessão do libsignal são silenciados; o log operacional usa somente eventos seguros. O serviço não expõe porta pública.
+
+Baileys 7.0.0-rc14 é uma integração **não oficial**, sujeita a desconexões e restrições de conta. Esta instalação é de uma única organização; não substitui infraestrutura distribuída nem um provedor oficial. Referência técnica: [WhiskeySockets/Baileys](https://github.com/WhiskeySockets/Baileys).
+
+## Interface
+
+Página pública responsiva, painel em `/dashboard`, fonte Inter local, paleta teal/menta, tema claro/escuro persistente, atalhos `Ctrl/⌘ K` para navegação/busca de leads, tabelas com ordenação da página atual e densidade ajustável, estados vazios e notificações. As estatísticas da página pública são **ilustrativas**, identificadas como exemplo; o painel usa dados da API. A paginação de leads continua no servidor.
 
 ## Conversas e Chatwoot
 
-A inbox local permite histórico, atribuição, nota, status, resposta mock e bloqueio. O bot usa regras determinísticas; registra uma sugestão para o operador na nota. Não envia respostas automáticas nem aprova crédito, calcula score, define taxas ou promete aprovação.
+A inbox local permite histórico, atribuição, nota, status, resposta WhatsApp real ou simulação de SMS/e-mail e bloqueio. O bot usa regras determinísticas; registra uma sugestão para o operador na nota. Não envia respostas automáticas nem aprova crédito, calcula score, define taxas ou promete aprovação.
 
 Chatwoot é opcional e utiliza uma instalação existente:
 
@@ -192,4 +199,4 @@ Implemente `MessagingProvider` em `packages/messaging`: `send`, `parseWebhook` e
 
 ## Escopo atual
 
-Não há exportação em massa, recuperação de senha, multiempresa, atribuição automática por equipe, edição de campanha aprovada ou campanhas com envio real. O laboratório WhatsApp é manual e separado das campanhas. A interface permite janelas por hora; `startAt`/`endAt` também existem na API. O Chatwoot não é instalado pelo Compose. O serviço não é um mecanismo de decisão de crédito. Antes de usar dados reais, valide o fluxo integrado, capacidade e restauração no seu ambiente.
+Não há exportação em massa, recuperação de senha, multiempresa, atribuição automática por equipe, edição de campanha aprovada nem múltiplos aparelhos WhatsApp simultâneos. A Central compartilha a sessão com campanhas e atendimento. A interface permite janelas por hora; `startAt`/`endAt` também existem na API. O Chatwoot não é instalado pelo Compose. O serviço não é um mecanismo de decisão de crédito. Antes de usar dados reais, valide o fluxo integrado, capacidade e restauração no seu ambiente.

@@ -26,12 +26,13 @@ jobs:
       - run: pnpm -r --filter '!@nexacred/web' build
       - run: pnpm typecheck && pnpm lint && pnpm test
       - run: pip install -r workers/importer/requirements.txt
-      - run: PYTHONPATH=workers/importer pytest workers/importer/tests -q
       - run: python scripts/create_fixture.py
+      - run: PYTHONPATH=workers/importer pytest workers/importer/tests -q
       - run: cp .env.example .env
       - run: docker compose up --build -d --wait --wait-timeout 300
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
+      - run: docker compose exec -T sender sh /app/infrastructure/entrypoint.sh node --input-type=module < tests/integration/whatsapp.mjs
       - run: docker compose --profile whatsapp-lab up --build -d --wait --wait-timeout 180 whatsapp-lab
       - name: Verify isolated lab starts without connecting
         run: docker compose exec -T whatsapp-lab node -e "fetch('http://localhost:3010/health').then(r=>{if(!r.ok)process.exit(1)})"

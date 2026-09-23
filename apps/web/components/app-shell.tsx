@@ -1,10 +1,10 @@
 'use client';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { WorkspaceTools } from './workspace-tools';
 import { useState } from 'react';
 import {
   Activity,
-  ArrowUpRight,
   Ban,
   ChartNoAxesCombined,
   ChevronDown,
@@ -20,14 +20,13 @@ import {
   Workflow,
   X,
   Zap,
-  FlaskConical,
-  Search,
+  Smartphone,
 } from 'lucide-react';
 const groups = [
   {
-    name: 'Workspace',
+    name: 'Operação',
     links: [
-      ['Visão geral', '/', ChartNoAxesCombined],
+      ['Visão geral', '/dashboard', ChartNoAxesCombined],
       ['Importações', '/imports', FileClock],
       ['Leads', '/leads', Users],
       ['Segmentos', '/segments', LayoutList],
@@ -39,7 +38,7 @@ const groups = [
       ['Campanhas', '/campaigns', Activity],
       ['Templates', '/templates', FileText],
       ['Conversas', '/conversations', MessageSquare],
-      ['Laboratório', '/testing', FlaskConical],
+      ['Central WhatsApp', '/testing', Smartphone],
     ],
   },
   {
@@ -55,12 +54,16 @@ const groups = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  if (pathname === '/') return <>{children}</>;
   if (pathname === '/login')
     return <main className="min-h-screen flex justify-center items-start px-5">{children}</main>;
   const title =
     groups.flatMap((g) => [...g.links]).find(([, href]) => href === pathname)?.[0] ?? 'Workspace';
   return (
     <div className="min-h-screen">
+      <a href="#conteudo" className="skip-link">
+        Ir para o conteúdo
+      </a>
       {open && (
         <button
           aria-label="Fechar navegação"
@@ -71,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside
         className={`fixed inset-y-0 left-0 z-40 flex w-[236px] flex-col bg-[#142b30] text-white transition-transform lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        <Link href="/" className="flex items-center gap-3 px-6 h-20">
+        <Link href="/dashboard" className="flex items-center gap-3 px-6 h-20">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#b7f7d5] text-[#19473d]">
             <Zap size={22} fill="currentColor" />
           </span>
@@ -84,7 +87,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             NC
           </span>
           <div className="flex-1">
-            <p className="text-xs font-medium">Meu workspace</p>
+            <p className="text-xs font-medium">Minha operação</p>
             <p className="mt-0.5 text-[10px] text-[#91adb2]">Gestão de relacionamento</p>
           </div>
           <ChevronDown size={13} className="text-[#91adb2]" />
@@ -125,7 +128,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }
           >
             <LogOut size={16} />
-            Sair do workspace
+            Sair da plataforma
           </button>
         </div>
       </aside>
@@ -138,20 +141,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             {open ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <span className="hidden text-xs text-slate-400 sm:block">Workspace</span>
+          <span className="hidden text-xs text-slate-400 sm:block">Operação</span>
           <span className="hidden text-slate-300 sm:block">/</span>
           <span className="text-sm font-medium">{title}</span>
-          <Link
-            href="/leads"
-            className="ml-auto hidden items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-400 sm:flex"
-          >
-            <Search size={14} />
-            Buscar leads
-            <ArrowUpRight size={12} />
-          </Link>
-          <span className="ml-auto sm:ml-0 rounded-full bg-teal-50 px-3 py-1.5 text-[11px] font-medium text-teal-700">
-            NexaCred Workspace
-          </span>
+          <WorkspaceTools />
           <span
             className="grid size-8 place-items-center rounded-full bg-[#e8ece5] text-xs font-semibold text-[#547155]"
             aria-hidden="true"
@@ -159,10 +152,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             NC
           </span>
         </header>
-        <main className="mx-auto max-w-[1600px] p-5 md:p-8 fade-in">{children}</main>
+        <main id="conteudo" className="mx-auto max-w-[1600px] p-5 md:p-8 fade-in">
+          {children}
+        </main>
         <footer className="mx-auto flex max-w-[1600px] justify-between px-8 py-5 text-[11px] text-slate-400">
           <span>NexaCred · Relacionamentos com mais controle</span>
-          <span>Workspace</span>
+          <span>Operação</span>
         </footer>
       </div>
     </div>

@@ -1,6 +1,15 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Inbox } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Inbox, Rows3 } from 'lucide-react';
+import { toast } from 'sonner';
+import {
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type SortingState,
+  type ColumnDef,
+} from '@tanstack/react-table';
 import { api } from '@/lib/client';
 import { Button, Card, Input } from './ui';
 import { Status } from './status';
@@ -125,36 +134,101 @@ export function DataTable({
   columns: Array<[string, string]>;
   onClick?: (row: Row) => void;
 }) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [compact, setCompact] = useState(false);
+  const table = useReactTable<Row>({
+    data: rows,
+    columns: columns.map<ColumnDef<Row, unknown>>(([key, label]) => ({
+      accessorKey: key,
+      header: label,
+      cell: ({ getValue }) =>
+        key === 'status' && typeof getValue() === 'string' ? (
+          <Status value={String(getValue())} />
+        ) : (
+          format(getValue())
+        ),
+    })),
+    state: { sorting },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getRowId: (row, i) => String(row.id ?? i),
+  });
   return (
     <Card className="overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+        <p className="text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">
+            {rows.length.toLocaleString('pt-BR')}
+          </span>{' '}
+          registros nesta página{' '}
+          <span className="ml-2 hidden text-slate-400 sm:inline">· Ordenação na página atual</span>
+        </p>
+        <button
+          aria-label={compact ? 'Usar linhas confortáveis' : 'Usar linhas compactas'}
+          aria-pressed={compact}
+          onClick={() => setCompact(!compact)}
+          className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
+        >
+          <Rows3 size={14} />
+          {compact ? 'Compacta' : 'Confortável'}
+        </button>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="border-b border-slate-100 bg-slate-50/60 text-[10px] uppercase tracking-wide text-slate-400">
-            <tr>
-              {columns.map(([key, label]) => (
-                <th key={key} className="px-5 py-3 font-medium">
-                  {label}
-                </th>
-              ))}
-            </tr>
+          <thead className="border-b border-slate-100 bg-slate-50/60 text-[10px] uppercase tracking-wide text-slate-500">
+            {table.getHeaderGroups().map((group) => (
+              <tr key={group.id}>
+                {group.headers.map((header) => (
+                  <th
+                    key={header.id}
+                    className="px-5 py-3 font-medium"
+                    aria-sort={
+                      header.column.getIsSorted() === 'asc'
+                        ? 'ascending'
+                        : header.column.getIsSorted() === 'desc'
+                          ? 'descending'
+                          : 'none'
+                    }
+                  >
+                    <button
+                      onClick={header.column.getToggleSortingHandler()}
+                      className="flex items-center gap-2 text-left"
+                    >
+                      {flexRender(header.column.columnDef.header, header.getContext())}
+                      {header.column.getIsSorted() === 'asc' ? (
+                        <ArrowUp size={12} />
+                      ) : header.column.getIsSorted() === 'desc' ? (
+                        <ArrowDown size={12} />
+                      ) : (
+                        <ArrowUpDown size={12} className="opacity-40" />
+                      )}
+                    </button>
+                  </th>
+                ))}
+              </tr>
+            ))}
           </thead>
           <tbody>
-            {rows.map((row, i) => (
+            {table.getRowModel().rows.map((row) => (
               <tr
-                key={String(row.id ?? i)}
-                onClick={() => onClick?.(row)}
-                className={`border-b border-slate-100 last:border-0 transition hover:bg-slate-50 ${onClick ? 'cursor-pointer' : ''}`}
+                key={row.id}
+                onClick={() => onClick?.(row.original)}
+                tabIndex={onClick ? 0 : undefined}
+                onKeyDown={(e) => {
+                  if (onClick && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    onClick(row.original);
+                  }
+                }}
+                className={`border-b border-slate-100 last:border-0 transition hover:bg-slate-50 ${onClick ? 'cursor-pointer focus-visible:bg-teal-50' : ''}`}
               >
-                {columns.map(([key], c) => (
+                {row.getVisibleCells().map((cell, i) => (
                   <td
-                    className={`px-5 py-3.5 max-w-sm truncate ${c === 0 ? 'font-medium text-slate-700' : 'text-slate-500'}`}
-                    key={key}
+                    key={cell.id}
+                    className={`max-w-sm truncate px-5 ${compact ? 'py-2' : 'py-4'} ${i === 0 ? 'font-medium text-slate-700' : 'text-slate-500'}`}
                   >
-                    {key === 'status' && typeof row[key] === 'string' ? (
-                      <Status value={row[key] as string} />
-                    ) : (
-                      format(row[key])
-                    )}
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
                   </td>
                 ))}
               </tr>
@@ -164,13 +238,19 @@ export function DataTable({
       </div>
       {!rows.length && (
         <div className="px-6 py-14 text-center">
-          <Inbox size={24} className="mx-auto mb-3 text-slate-300" />
-          <p className="text-xs text-slate-400">Nenhum registro encontrado.</p>
+          <span className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-slate-50 text-slate-400">
+            <Inbox size={23} />
+          </span>
+          <p className="text-sm font-medium">Nenhum registro por aqui</p>
+          <p className="mt-2 text-xs text-slate-500">
+            Ajuste os filtros ou crie o primeiro registro para começar.
+          </p>
         </div>
       )}
     </Card>
   );
 }
+
 export function format(value: unknown): string {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'object') return JSON.stringify(value);
@@ -205,7 +285,9 @@ export function SimpleResource({
       {data ? (
         <DataTable rows={transform ? data.map(transform) : data} columns={columns} />
       ) : (
-        <p>Carregando…</p>
+        <div className="panel h-60 animate-pulse p-6" role="status">
+          <span className="text-sm text-slate-500">Carregando registros…</span>
+        </div>
       )}
     </>
   );
@@ -237,6 +319,7 @@ export function CreateForm({
             const f = new FormData(form);
             await api(path, convert ? convert(f) : Object.fromEntries(f));
             setSuccess('Salvo com sucesso.');
+            toast.success('Registro salvo com sucesso.');
             onCreated?.();
           } catch (e) {
             setError((e as Error).message);

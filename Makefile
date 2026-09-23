@@ -32,9 +32,9 @@ reset: ## APAGA TODOS OS DADOS (volumes) e sobe do zero
 	docker compose down -v
 	docker compose up --build -d
 
-whatsapp: ## Reinicia o laboratório WhatsApp (após configurar WHATSAPP_TEST_NUMBERS no .env)
+whatsapp: ## Reconstrói a Central WhatsApp (sem cadastro de números no .env)
 	docker compose up --build -d whatsapp-lab
-	@echo "Laboratório WhatsApp reiniciado. Abra o painel em Laboratório para ler o QR Code."
+	@echo "WhatsApp reiniciado. Abra a Central WhatsApp para conectar seu aparelho."
 
 whatsapp-logs: ## Acompanha os logs do laboratório WhatsApp
 	docker compose logs -f whatsapp-lab

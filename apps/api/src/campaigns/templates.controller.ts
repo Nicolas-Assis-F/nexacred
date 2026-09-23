@@ -6,7 +6,7 @@ import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { PrismaService } from '../common/prisma.service.js';
 class CreateTemplateDto {
   @IsString() name!: string;
-  @IsIn(['SMS', 'EMAIL']) channel!: 'SMS' | 'EMAIL';
+  @IsIn(['SMS', 'EMAIL', 'WHATSAPP']) channel!: 'SMS' | 'EMAIL' | 'WHATSAPP';
   @IsOptional() @IsString() subject?: string;
   @IsString() @MinLength(3) body!: string;
 }

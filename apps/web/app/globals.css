@@ -87,3 +87,161 @@ button:disabled {
     scroll-behavior: auto !important;
   }
 }
+
+/* Shared product tokens. Kept independent of marketing artwork and QR contrast. */
+:root {
+  --canvas: #f5f7f8;
+  --surface: #fff;
+  --ink: #203538;
+  --line: #e3e9e8;
+  --brand: #142b30;
+  --brand-surface: #163c38;
+  --mint: #b7f7d5;
+  --muted: #71838b;
+}
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-feature-settings: 'cv11', 'ss01';
+}
+.panel {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow:
+    0 2px 4px #143e3003,
+    0 8px 24px #143e3002;
+}
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+input,
+select,
+textarea {
+  color: var(--ink);
+}
+button,
+a,
+input,
+select,
+textarea,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+:focus-visible {
+  outline: 2px solid #0d9488;
+  outline-offset: 3px;
+}
+.metric-number,
+table {
+  font-variant-numeric: tabular-nums;
+}
+.channel-hero {
+  background: radial-gradient(ellipse at 90% 10%, #286455 0, transparent 55%), #163c38;
+}
+.channel-hero::after {
+  content: '';
+  pointer-events: none;
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  right: -60px;
+  top: -120px;
+  border: 1px solid #ffffff0d;
+  border-radius: 50%;
+}
+.message-preview {
+  background-color: #f0f3ee;
+  background-image: radial-gradient(#1e44320c 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+.marketing {
+  background: #f8faf7;
+  color: #203538;
+}
+.skip-link {
+  position: fixed;
+  top: -100px;
+  left: 20px;
+  z-index: 100;
+  border-radius: 8px;
+  padding: 12px 20px;
+  background: var(--surface);
+}
+.skip-link:focus {
+  top: 12px;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 80px;
+}
+[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: #0e1b20;
+  --surface: #16272c;
+  --ink: #e1edeb;
+  --line: #2a3e43;
+  --muted: #9bafb4;
+  --color-slate-50: #1c3036;
+  --color-slate-100: #263b41;
+  --color-slate-200: #344b51;
+  --color-slate-300: #627c83;
+  --color-slate-400: #93aab0;
+  --color-slate-500: #a5b8bd;
+  --color-slate-600: #bbcccf;
+  --color-slate-700: #d4e2e3;
+  --color-slate-800: #e3eeee;
+  --color-slate-900: #f0f7f6;
+  --color-teal-50: #163c38;
+  --color-teal-100: #245047;
+  --color-emerald-50: #183c32;
+  --color-emerald-100: #235441;
+  --color-amber-50: #3b3020;
+  --color-amber-200: #6e5425;
+  --color-red-50: #41252a;
+  --color-red-200: #76383e;
+}
+[data-theme='dark'] .bg-white {
+  background-color: var(--surface);
+}
+[data-theme='dark'] .bg-white\/95 {
+  background-color: #16272cf2;
+}
+[data-theme='dark'] .text-teal-700,
+[data-theme='dark'] .text-teal-800,
+[data-theme='dark'] .text-emerald-700,
+[data-theme='dark'] .text-emerald-800 {
+  color: #a2e9ca;
+}
+[data-theme='dark'] .text-amber-700,
+[data-theme='dark'] .text-amber-900 {
+  color: #f3cc87;
+}
+[data-theme='dark'] .text-red-700,
+[data-theme='dark'] .text-red-800 {
+  color: #ffa6ac;
+}
+[data-theme='dark'] .message-preview {
+  background-color: #1b302e;
+}
+[data-theme='dark'] .marketing {
+  background: var(--canvas);
+  color: var(--ink);
+}
+[data-theme='dark'] .marketing [class*='bg-[#e8f0e7]'],
+[data-theme='dark'] .marketing [class*='bg-[#f5f8f5]'] {
+  background-color: #1a3332;
+}
+[data-theme='dark'] .eyebrow {
+  color: #9bafb4;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

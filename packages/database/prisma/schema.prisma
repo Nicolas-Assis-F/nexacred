@@ -38,6 +38,7 @@ enum ContactStatus {
   SUPPRESSED
 }
 enum Channel {
+  WHATSAPP
   SMS
   EMAIL
 }

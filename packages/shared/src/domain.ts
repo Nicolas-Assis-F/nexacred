@@ -13,6 +13,6 @@ export const botReplies = {
   WAITING_HUMAN: 'Sua conversa está aguardando um atendente.',
   NEW: 'Posso encaminhar você para um atendente. Para não receber campanhas, responda SAIR.',
 } as const;
-export const contactTypeFor = (channel: string): 'PHONE' | 'EMAIL' => channel === 'SMS' ? 'PHONE' : 'EMAIL';
+export const contactTypeFor = (channel: string): 'PHONE' | 'EMAIL' => channel === 'EMAIL' ? 'EMAIL' : 'PHONE';
 export const channelFor = (type: string): 'SMS' | 'EMAIL' => type === 'PHONE' ? 'SMS' : 'EMAIL';
 export const CONSENT_PURPOSE = 'CREDIT_MARKETING';

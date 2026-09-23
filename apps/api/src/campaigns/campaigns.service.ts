@@ -131,6 +131,14 @@ export class CampaignsService {
     return this.get(id);
   }
   async start(id: string, actorId: string) {
+    const campaign = await this.get(id);
+    if (campaign.channel === 'WHATSAPP') {
+      if (process.env.WHATSAPP_LAB_ENABLED !== 'true') throw new BadRequestException('WhatsApp desativado.');
+      const connected = await fetch(`${process.env.WHATSAPP_LAB_URL ?? 'http://whatsapp-lab:3010'}/status`, {
+        headers: { authorization: `Bearer ${process.env.MOCK_WEBHOOK_SECRET ?? ''}` }, signal: AbortSignal.timeout(5000),
+      }).then(async r => r.ok && (await r.json() as {status:string}).status === 'CONNECTED').catch(() => false);
+      if (!connected) throw new BadRequestException('Conecte seu aparelho na Central WhatsApp antes de iniciar.');
+    }
     const changed = await this.prisma.campaign.updateMany({
       where: { id, status: { in: ['APPROVED', 'PAUSED'] } },
       data: { status: 'RUNNING' },

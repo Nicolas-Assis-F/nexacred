@@ -5,7 +5,7 @@ import { AuthGuard } from '@nestjs/passport';
 export class SettingsController {
   @Get() get() {
     return {
-      provider: 'mock',
+      provider: process.env.WHATSAPP_LAB_ENABLED === 'true' ? 'WhatsApp (Baileys) · SMS/e-mail simulados' : 'Simulação',
       chatwootEnabled: process.env.CHATWOOT_ENABLED === 'true',
       chatwootUrl: process.env.CHATWOOT_ENABLED === 'true' ? process.env.CHATWOOT_URL : null,
       timezone: 'America/Sao_Paulo',

@@ -1,54 +1,70 @@
 'use client';
-import { useState } from 'react';
-import { QrCode, FlaskConical, ShieldCheck, Smartphone, Send } from 'lucide-react';
-import { Button, Card } from '@/components/ui';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import {
+  ArrowRight,
+  Check,
+  CheckCheck,
+  Clock3,
+  LoaderCircle,
+  MessageCircle,
+  QrCode,
+  RefreshCw,
+  Send,
+  ShieldCheck,
+  Smartphone,
+  Unplug,
+  Wifi,
+} from 'lucide-react';
+import { Button, Card, Input } from '@/components/ui';
 import { ErrorBox, useResource } from '@/components/resource';
 import { api } from '@/lib/client';
 type Lab = {
   enabled: boolean;
   status: string;
-  qr?: string;
-  qrExpiresAt?: number;
-  note?: string;
-  allowlist: Array<{ id: string; label: string }>;
-  attempts: Array<{ id: string; at: number; status: string; target: string }>;
+  qr: string | null;
+  qrExpiresAt: number | null;
+  note: string;
+  attempts: Array<{ id: string; at: number; status: string; target: string; kind: string }>;
 };
-const OPT_OUT_FOOTER = 'Para interromper os testes, responda SAIR.';
-const DEFAULT_MESSAGE =
-  'Olá! Aqui é a equipe NexaCred. Estamos testando nosso canal de atendimento no WhatsApp. Podemos seguir por aqui?';
 const labels: Record<string, string> = {
-  CONNECTED: 'Conectado',
-  DISCONNECTED: 'Desconectado',
+  CONNECTED: 'Pronto para enviar',
+  DISCONNECTED: 'Aparelho desconectado',
   CONNECTING: 'Conectando',
-  QR_READY: 'Aguardando leitura',
-  ERROR: 'Falha na conexão',
+  QR_READY: 'Escaneie para conectar',
+  ERROR: 'Verifique a conexão',
   PENDING: 'Processando',
   SENT: 'Enviado',
   DELIVERED: 'Entregue',
   READ: 'Lido',
-  UNCERTAIN: 'Resultado incerto',
+  UNCERTAIN: 'Sem confirmação',
 };
 export default function Testing() {
-  const { data, error, load } = useResource<Lab>('/testing/whatsapp', 5000);
+  const { data, error, load } = useResource<Lab>('/testing/whatsapp', 3000);
   const [busy, setBusy] = useState(false),
     [failure, setFailure] = useState(''),
-    [notice, setNotice] = useState(''),
-    [target, setTarget] = useState(''),
-    [consent, setConsent] = useState(false),
-    [message, setMessage] = useState(DEFAULT_MESSAGE),
-    [requestId, setRequestId] = useState<string>();
-  const trimmed = message.trim();
-  const preview = !trimmed
-    ? DEFAULT_MESSAGE + '\n\n' + OPT_OUT_FOOTER
-    : /\bSAIR\b/i.test(trimmed)
-      ? trimmed
-      : trimmed + '\n\n' + OPT_OUT_FOOTER;
-  async function action(name: string) {
+    [notice, setNotice] = useState('');
+  const [phone, setPhone] = useState(''),
+    [consent, setConsent] = useState(false);
+  const [message, setMessage] = useState(
+    'Olá! Aqui é a equipe NexaCred. Esta é a mensagem de teste do nosso atendimento, conforme você autorizou.',
+  );
+  const [requestId, setRequestId] = useState<string>(),
+    [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const connected = data?.status === 'CONNECTED';
+  const preview = /\bSAIR\b/i.test(message)
+    ? message.trim()
+    : message.trim() + '\n\nPara não receber mais mensagens, responda SAIR.';
+  const seconds = Math.max(0, Math.ceil(((data?.qrExpiresAt ?? now) - now) / 1000));
+  async function connection(action: string) {
     setBusy(true);
     setFailure('');
-    setNotice('');
     try {
-      await api('/testing/whatsapp/' + name, {});
+      await api('/testing/whatsapp/' + action, {});
       await load();
     } catch (e) {
       setFailure((e as Error).message);
@@ -65,250 +81,375 @@ export default function Testing() {
     try {
       const result = await api<{ status: string }>('/testing/whatsapp/send', {
         id,
-        targetId: target,
+        phone,
         consent,
-        message: trimmed || undefined,
+        message,
       });
-      setNotice(
-        `Teste: ${labels[result.status] ?? result.status}. Confira o histórico e o aparelho de destino.`,
-      );
-      if (result.status !== 'UNCERTAIN' && result.status !== 'PENDING') setRequestId(undefined);
+      if (['SENT', 'DELIVERED', 'READ'].includes(result.status)) {
+        setNotice('Mensagem enviada. Acompanhe a confirmação de entrega no histórico.');
+        setRequestId(undefined);
+      } else
+        setFailure(
+          'O WhatsApp ainda não confirmou o envio. Confira o aparelho antes de criar outra tentativa.',
+        );
       await load();
     } catch (e) {
-      setFailure(
-        (e as Error).message +
-          ' Ao tentar novamente, o mesmo identificador será usado para evitar duplicidade.',
-      );
+      setFailure((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
   return (
-    <div className="space-y-7">
-      <header>
-        <p className="eyebrow">CONEXÕES / WHATSAPP</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-          Laboratório de mensagens
-          <span className="ml-3 align-middle rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
-            Beta
-          </span>
-        </h1>
-        <p className="mt-2 text-slate-500">
-          Conecte um aparelho e acompanhe seu primeiro teste, passo a passo.
-        </p>
-      </header>
-      <ErrorBox error={error || failure} />
-      {!data && !error && <Card className="p-8">Carregando conexão…</Card>}
+    <div className="space-y-6">
+      <section className="channel-hero relative overflow-hidden rounded-2xl p-6 text-white md:p-8">
+        <div className="relative z-10 flex flex-wrap items-center justify-between gap-6">
+          <div>
+            <div className="mb-4 flex items-center gap-2 text-xs font-medium text-[#b7f7d5]">
+              <span className="size-1.5 rounded-full bg-current" />
+              RELACIONAMENTO · WHATSAPP
+            </div>
+            <h1 className="text-3xl font-semibold tracking-tight">Boas conversas começam aqui.</h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-[#afc9c3]">
+              Conecte seu aparelho, teste a primeira mensagem e acompanhe cada entrega em um só
+              lugar.
+            </p>
+          </div>
+          <Link
+            href="/campaigns"
+            className="inline-flex items-center gap-3 rounded-xl border border-white/20 bg-white/5 px-4 py-3 text-sm hover:bg-white/10"
+          >
+            Ir para campanhas <ArrowRight size={16} />
+          </Link>
+        </div>
+      </section>
+      <ErrorBox error={failure || error} />
+      {!data && !error && (
+        <div className="grid gap-6 lg:grid-cols-[360px_1fr]" aria-label="Carregando WhatsApp">
+          <div className="panel h-96 animate-pulse" />
+          <div className="panel h-96 animate-pulse" />
+        </div>
+      )}
       {data && !data.enabled && (
-        <Card className="p-7">
-          <FlaskConical className="mb-4 text-teal-700" />
-          <h2 className="text-lg font-semibold">Ative seu ambiente de testes</h2>
+        <Card className="p-8">
+          <h2 className="font-semibold">Canal desativado</h2>
           <p className="mt-2 text-sm text-slate-500">
-            Um administrador precisa configurar os números dos participantes no servidor e iniciar o
-            serviço.
-          </p>
-          <pre className="mt-5 overflow-auto rounded-xl bg-slate-900 p-5 text-xs leading-7 text-emerald-100">
-            {
-              '# No arquivo .env\nWHATSAPP_LAB_ENABLED=true\nWHATSAPP_TEST_NUMBERS=+55DDDNUMERO\n\n# No terminal do servidor\ndocker compose --profile whatsapp-lab up --build -d'
-            }
-          </pre>
-          <p className="mt-4 text-sm text-slate-500">
-            Use até 5 números de teste, separados por vírgula, com DDI e DDD. A tela fica disponível
-            somente para administradores.
+            Peça ao administrador para ativar o serviço WhatsApp nesta instalação.
           </p>
         </Card>
       )}
       {data?.enabled && (
-        <div className="grid gap-6 xl:grid-cols-[1fr_1.1fr]">
-          <Card className="p-7">
-            <div className="flex items-center justify-between">
+        <div className="grid items-start gap-6 xl:grid-cols-[350px_minmax(0,1fr)]">
+          <Card className="overflow-hidden">
+            <div className="flex items-center justify-between border-b border-slate-100 p-5">
               <div className="flex items-center gap-3">
-                <span className="rounded-xl bg-emerald-50 p-3 text-teal-700">
-                  <QrCode size={22} />
+                <span className="rounded-xl bg-teal-50 p-2.5 text-teal-700">
+                  <Smartphone size={20} />
                 </span>
                 <div>
-                  <p className="eyebrow">PASSO 01</p>
-                  <h2 className="font-semibold">Conecte o WhatsApp</h2>
+                  <h2 className="font-semibold">Seu aparelho</h2>
+                  <p className="mt-1 text-xs text-slate-500">Conexão por QR Code</p>
                 </div>
               </div>
               <span
-                className={`rounded-full px-3 py-1 text-xs ${data.status === 'CONNECTED' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}
-              >
-                {labels[data.status] ?? data.status}
-              </span>
+                className={`size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-400'}`}
+              />
             </div>
-            <div className="my-6 flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-5">
-              {data.qr && data.qrExpiresAt && data.qrExpiresAt > Date.now() ? (
-                <img
-                  src={data.qr}
-                  alt="QR Code para conectar seu WhatsApp ao laboratório"
-                  width={264}
-                  height={264}
-                />
-              ) : (
+            <div className="p-6">
+              <div
+                className={`mb-5 flex items-center justify-center gap-2 rounded-full px-3 py-2 text-xs font-medium ${connected ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}
+                aria-live="polite"
+              >
+                {connected ? <Wifi size={14} /> : <Clock3 size={14} />}{' '}
+                {labels[data.status] ?? data.status}
+              </div>
+              {data.qr ? (
                 <>
-                  <Smartphone size={56} strokeWidth={1} className="mb-4 text-teal-700" />
-                  <p className="text-center text-sm text-slate-500">
-                    {data.status === 'CONNECTED'
-                      ? 'Seu aparelho está conectado.'
-                      : data.status === 'QR_READY'
-                        ? 'Atualizando QR Code…'
-                        : 'O QR Code aparecerá aqui.'}
+                  <div className="mx-auto max-w-[290px] rounded-2xl border border-slate-200 bg-white p-2">
+                    <img
+                      src={data.qr}
+                      width={320}
+                      height={320}
+                      alt="QR Code para conectar seu WhatsApp"
+                      className="h-auto w-full"
+                    />
+                  </div>
+                  <p className="mt-3 flex items-center justify-center gap-2 text-xs text-slate-500">
+                    <RefreshCw size={12} />
+                    {seconds ? `Renovação automática em ${seconds}s` : 'Atualizando QR Code…'}
                   </p>
                 </>
+              ) : (
+                <div className="connection-stage flex h-60 flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50">
+                  <span
+                    className={`grid size-20 place-items-center rounded-3xl ${connected ? 'bg-teal-100 text-teal-700' : 'bg-white text-slate-400 shadow-sm'}`}
+                  >
+                    {connected ? (
+                      <CheckCheck size={36} />
+                    ) : data.status === 'CONNECTING' ? (
+                      <LoaderCircle size={34} className="animate-spin" />
+                    ) : (
+                      <QrCode size={38} />
+                    )}
+                  </span>
+                  <p className="max-w-52 text-center text-sm text-slate-500">
+                    {connected
+                      ? 'Tudo pronto para a próxima conversa.'
+                      : 'Conecte seu aparelho para gerar o QR Code.'}
+                  </p>
+                </div>
+              )}
+              {!connected && (
+                <ol className="my-6 space-y-3 text-xs leading-5 text-slate-500">
+                  {[
+                    'Abra o WhatsApp no seu celular.',
+                    'Vá em Aparelhos conectados → Conectar aparelho.',
+                    'Aponte a câmera para o QR Code.',
+                  ].map((step, i) => (
+                    <li key={step} className="flex gap-3">
+                      <span className="grid size-5 shrink-0 place-items-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">
+                        {i + 1}
+                      </span>
+                      {step}
+                    </li>
+                  ))}
+                </ol>
+              )}
+              <p className="my-4 text-xs leading-5 text-slate-500" role="status">
+                {data.note}
+              </p>
+              {connected ? (
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        'Desconectar este aparelho? Será necessário escanear o QR novamente.',
+                      )
+                    )
+                      void connection('disconnect');
+                  }}
+                >
+                  <Unplug size={15} />
+                  Desconectar aparelho
+                </Button>
+              ) : (
+                <Button
+                  className="w-full"
+                  disabled={busy || ['CONNECTING', 'QR_READY'].includes(data.status)}
+                  onClick={() => void connection('connect')}
+                >
+                  <QrCode size={16} />
+                  {data.status === 'QR_READY'
+                    ? 'Aguardando leitura do QR'
+                    : data.status === 'CONNECTING'
+                      ? 'Conectando…'
+                      : 'Conectar WhatsApp'}
+                </Button>
               )}
             </div>
-            <p className="min-h-10 text-sm text-slate-500">{data.note}</p>
-            <div className="mt-5 flex gap-3">
-              <Button
-                disabled={busy || !['DISCONNECTED', 'ERROR'].includes(data.status)}
-                onClick={() => void action('connect')}
-              >
-                Conectar aparelho
-              </Button>
-              <Button
-                variant="outline"
-                disabled={busy || data.status === 'DISCONNECTED'}
-                onClick={() => void action('disconnect')}
-              >
-                Desconectar
-              </Button>
+            <div className="flex gap-2 border-t border-slate-100 bg-slate-50 px-6 py-4 text-xs leading-5 text-slate-500">
+              <ShieldCheck size={16} className="shrink-0 text-teal-700" />
+              Sua sessão é salva. Você não precisa ler o QR a cada acesso.
             </div>
-            <p className="mt-4 text-xs text-slate-500">
-              No celular: WhatsApp → Aparelhos conectados → Conectar aparelho.
-            </p>
           </Card>
-          <Card className="p-7">
-            <div className="flex items-center gap-3">
-              <span className="rounded-xl bg-emerald-50 p-3 text-teal-700">
-                <Send size={22} />
+          <Card className="overflow-hidden">
+            <div className="flex items-center gap-3 border-b border-slate-100 p-5">
+              <span className="rounded-xl bg-teal-50 p-2.5 text-teal-700">
+                <Send size={20} />
               </span>
               <div>
-                <p className="eyebrow">PASSO 02</p>
-                <h2 className="font-semibold">Envie uma mensagem de teste</h2>
+                <h2 className="font-semibold">Sua primeira mensagem</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  Um teste real, direto para o destinatário autorizado.
+                </p>
               </div>
             </div>
-            <label className="mt-7 block text-sm font-medium">
-              Destinatário de teste
-              <select
-                value={target}
-                onChange={(e) => {
-                  setTarget(e.target.value);
-                  setRequestId(undefined);
-                  setConsent(false);
-                }}
-                disabled={busy || !!requestId}
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3"
-              >
-                <option value="">Escolha um número cadastrado</option>
-                {data.allowlist.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {!data.allowlist.length && (
-              <p className="mt-2 text-sm text-amber-700">
-                Cadastre um número em WHATSAPP_TEST_NUMBERS e reinicie os serviços.
-              </p>
-            )}
-            <label className="mb-2 mt-6 flex items-center justify-between text-sm font-medium">
-              Mensagem de teste
-              <span className="text-xs font-normal text-slate-400">{trimmed.length}/700</span>
-            </label>
-            <textarea
-              value={message}
-              onChange={(e) => setMessage(e.target.value.slice(0, 700))}
-              rows={4}
-              disabled={busy || !!requestId}
-              aria-label="Mensagem de teste"
-              placeholder="Escreva a mensagem que quer testar…"
-              className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
-            />
-            <p className="mb-2 mt-4 text-xs font-medium text-slate-500">Prévia enviada ao aparelho</p>
-            <div className="whitespace-pre-line rounded-2xl rounded-tr-sm border border-emerald-100 bg-emerald-50 p-5 text-sm leading-7 text-emerald-950">
-              {preview}
+            <div className="grid gap-7 p-6 2xl:grid-cols-2">
+              <div className="space-y-5">
+                <label className="block text-sm font-medium">
+                  Número do destinatário
+                  <Input
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="off"
+                    placeholder="(11) 99999-9999"
+                    value={phone}
+                    disabled={busy || !!requestId}
+                    onChange={(e) => {
+                      setPhone(e.target.value);
+                      setConsent(false);
+                      setNotice('');
+                    }}
+                    className="mt-2 !h-12"
+                  />
+                  <span className="mt-2 block text-xs font-normal text-slate-500">
+                    Digite o DDD e o número. Não é necessário cadastrar antes.
+                  </span>
+                </label>
+                <label className="block text-sm font-medium">
+                  <span className="mb-2 flex justify-between">
+                    Mensagem
+                    <span className="text-xs font-normal text-slate-400">{message.length}/700</span>
+                  </span>
+                  <textarea
+                    aria-label="Mensagem de teste"
+                    value={message}
+                    maxLength={700}
+                    disabled={busy || !!requestId}
+                    onChange={(e) => setMessage(e.target.value)}
+                    rows={6}
+                    className="w-full resize-y rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  />
+                </label>
+                <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-4 text-xs leading-5 text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={consent}
+                    disabled={busy || !!requestId}
+                    onChange={(e) => setConsent(e.target.checked)}
+                    className="mt-0.5 size-4 shrink-0 accent-teal-700"
+                  />
+                  Confirmo que o destinatário autorizou receber esta mensagem de teste. Esta
+                  autorização não libera campanhas de marketing.
+                </label>
+                <Button
+                  className="w-full"
+                  size="lg"
+                  disabled={busy || !connected || !phone.trim() || !message.trim() || !consent}
+                  onClick={() => void send()}
+                >
+                  {busy ? <LoaderCircle size={16} className="animate-spin" /> : <Send size={16} />}{' '}
+                  {busy
+                    ? 'Processando…'
+                    : requestId
+                      ? 'Consultar mesma tentativa'
+                      : 'Enviar mensagem de teste'}
+                </Button>
+                {requestId && !busy && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          'Confira no WhatsApp se a mensagem chegou. Liberar o formulário permite uma NOVA mensagem. Continuar?',
+                        )
+                      ) {
+                        setRequestId(undefined);
+                        setFailure('');
+                      }
+                    }}
+                  >
+                    Revisar dados / liberar nova tentativa
+                  </Button>
+                )}
+                {notice && (
+                  <p
+                    role="status"
+                    className="flex gap-2 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800"
+                  >
+                    <Check size={18} className="shrink-0" />
+                    {notice}
+                  </p>
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="eyebrow mb-3">PRÉVIA NO WHATSAPP</p>
+                <div className="message-preview rounded-2xl border border-slate-200 p-5">
+                  <div className="mb-8 flex items-center gap-3">
+                    <span className="grid size-10 place-items-center rounded-full bg-teal-700 text-white">
+                      <MessageCircle size={20} />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">NexaCred</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">Atendimento pelo WhatsApp</p>
+                    </div>
+                  </div>
+                  <div className="ml-3 rounded-2xl rounded-tr-sm bg-[#d9fdd3] p-4 text-sm leading-6 text-[#203c32] shadow-sm">
+                    <p className="whitespace-pre-wrap break-words">{preview}</p>
+                    <span className="mt-3 flex justify-end gap-1 text-[10px] text-[#617b69]">
+                      Prévia <CheckCheck size={14} />
+                    </span>
+                  </div>
+                  <p className="mt-6 text-center text-[11px] text-slate-500">
+                    A instrução de saída acompanha sua mensagem.
+                  </p>
+                </div>
+                <div className="mt-4 flex gap-3 rounded-xl bg-slate-50 p-4 text-xs leading-5 text-slate-500">
+                  <ShieldCheck size={18} className="shrink-0 text-teal-700" />
+                  <p>
+                    Testes: até 5 por hora e 20 por dia. Para uma campanha, registre o consentimento
+                    do contato em Leads e revise o público antes de iniciar.
+                  </p>
+                </div>
+              </div>
             </div>
-            <p className="mt-2 text-xs text-slate-400">
-              A linha “responda SAIR” é adicionada automaticamente quando você não a inclui.
-            </p>
-            <label className="my-6 flex items-start gap-3 text-sm leading-6 text-slate-600">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                className="mt-1 h-4 w-4 accent-teal-700"
-              />
-              Confirmo que este número é meu ou pertence a um participante que autorizou receber
-              esta mensagem de teste.
-            </label>
-            <Button
-              className="w-full"
-              disabled={busy || data.status !== 'CONNECTED' || !target || !consent}
-              onClick={() => void send()}
-            >
-              <Send size={16} />
-              {busy
-                ? 'Processando…'
-                : requestId
-                  ? 'Consultar / repetir mesma tentativa'
-                  : 'Enviar mensagem de teste'}
-            </Button>
-            {notice && (
-              <p
-                role="status"
-                className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800"
-              >
-                {notice}
-              </p>
-            )}
-            <p className="mt-4 text-xs leading-5 text-slate-500">
-              Limite de 5 tentativas por hora e 20 por dia. “Enviado” indica aceite pelo cliente; a
-              entrega depende da confirmação do WhatsApp. Resultados incertos precisam ser
-              conferidos no aparelho.
-            </p>
           </Card>
         </div>
       )}
-      <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
-        <ShieldCheck className="mt-1 shrink-0" size={20} />
-        <p>
-          Baileys é uma integração não oficial e pode apresentar desconexões ou restrições de conta.
-          Este laboratório usa envios manuais; as campanhas continuam no provedor de simulação.
-          Respostas SAIR bloqueiam novos testes para o destinatário identificado.
-        </p>
-      </div>
-      {!!data?.attempts.length && (
-        <Card className="overflow-hidden">
-          <div className="border-b border-slate-100 p-6">
-            <h2 className="font-semibold">Últimos testes</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Acompanhe as confirmações recebidas do aparelho.
-            </p>
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-slate-100 p-5">
+          <div>
+            <h2 className="font-semibold">Atividade do canal</h2>
+            <p className="mt-1 text-xs text-slate-500">Confirmações reais recebidas do WhatsApp.</p>
           </div>
-          <div className="overflow-auto">
+          <span className="flex items-center gap-2 text-xs text-slate-500">
+            <span className="size-1.5 rounded-full bg-teal-500" />
+            Atualiza automaticamente
+          </span>
+        </div>
+        {data?.attempts.length ? (
+          <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs text-slate-500">
                 <tr>
-                  <th className="p-4">DESTINATÁRIO</th>
-                  <th className="p-4">HORÁRIO</th>
-                  <th className="p-4">STATUS</th>
+                  {['Destinatário', 'Origem', 'Data e hora', 'Status'].map((t) => (
+                    <th key={t} className="px-6 py-3 font-medium">
+                      {t}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {data.attempts.map((a) => (
                   <tr key={a.id} className="border-t border-slate-100">
-                    <td className="p-4 font-medium">{a.target}</td>
-                    <td className="p-4 text-slate-500">{new Date(a.at).toLocaleString('pt-BR')}</td>
-                    <td className="p-4">{labels[a.status] ?? a.status}</td>
+                    <td className="px-6 py-4 font-medium">{a.target}</td>
+                    <td className="px-6 py-4 text-slate-500">
+                      {a.kind === 'CAMPAIGN' ? 'Campanha / atendimento' : 'Teste manual'}
+                    </td>
+                    <td className="whitespace-nowrap px-6 py-4 text-slate-500">
+                      {new Date(a.at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs ${a.status === 'UNCERTAIN' ? 'bg-amber-50 text-amber-700' : 'bg-teal-50 text-teal-700'}`}
+                      >
+                        <CheckCheck size={13} />
+                        {labels[a.status] ?? a.status}
+                      </span>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </Card>
-      )}
+        ) : (
+          <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+            <MessageCircle className="mb-2 text-slate-300" size={28} />
+            <p className="text-sm font-medium">Sua próxima conversa aparece aqui</p>
+            <p className="text-xs text-slate-500">
+              Conecte o aparelho e envie uma mensagem autorizada para começar.
+            </p>
+          </div>
+        )}
+      </Card>
+      <p className="text-xs leading-5 text-slate-500">
+        Baileys é uma conexão não oficial e está sujeito a restrições do WhatsApp. “Enviado” indica
+        aceite; “Entregue” e “Lido” dependem das confirmações do destinatário. Responder SAIR
+        bloqueia novos envios.
+      </p>
     </div>
   );
 }

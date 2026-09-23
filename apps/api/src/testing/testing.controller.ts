@@ -11,12 +11,16 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
 import { IsBoolean, IsOptional, IsString, IsUUID, Length, MaxLength } from 'class-validator';
+import { normalizeBrazilianPhone } from '@nexacred/shared';
+import { PrismaService } from '../common/prisma.service.js';
+import { PiiEncryptionService } from '../common/encryption.provider.js';
 import { PermissionGuard, RequirePermission } from '../common/rbac.js';
 import { AuditService } from '../common/audit.service.js';
 import type { AuthenticatedRequest } from '../common/request-context.js';
 class TestMessageDto {
   @IsUUID() id!: string;
-  @IsString() @Length(64, 64) targetId!: string;
+  @IsOptional() @IsString() @Length(64, 64) targetId?: string;
+  @IsString() @Length(10, 25) phone!: string;
   @IsBoolean() consent!: boolean;
   @IsOptional() @IsString() @MaxLength(700) message?: string;
 }
@@ -24,7 +28,11 @@ class TestMessageDto {
 @UseGuards(AuthGuard('jwt'), PermissionGuard)
 @RequirePermission('user:write')
 export class TestingController {
-  constructor(private readonly audit: AuditService) {}
+  constructor(
+    private readonly audit: AuditService,
+    private readonly prisma: PrismaService,
+    private readonly crypto: PiiEncryptionService,
+  ) {}
   private async request(path: string, body?: object): Promise<unknown> {
     if (process.env.WHATSAPP_LAB_ENABLED !== 'true') {
       if (!body)
@@ -33,7 +41,7 @@ export class TestingController {
           status: 'DISABLED',
           qr: null,
           qrExpiresAt: null,
-          note: 'Ative o perfil whatsapp-lab e configure os números de teste no servidor.',
+          note: 'Ative o serviço WhatsApp no servidor.',
           allowlist: [],
           attempts: [],
           limits: { hourly: 5, daily: 20 },
@@ -71,23 +79,55 @@ export class TestingController {
   @Get() status() {
     return this.request('/status');
   }
-  @Post('connect') connect() {
+  @Post('connect') async connect(@Req() req: AuthenticatedRequest) {
+    await this.audit.record({
+      actorId: req.user.id,
+      action: 'WHATSAPP_CONNECT',
+      entityType: 'WhatsAppSession',
+    });
     return this.request('/connect', {});
   }
-  @Post('disconnect') disconnect() {
+  @Post('disconnect') async disconnect(@Req() req: AuthenticatedRequest) {
+    await this.audit.record({
+      actorId: req.user.id,
+      action: 'WHATSAPP_DISCONNECT',
+      entityType: 'WhatsAppSession',
+    });
     return this.request('/disconnect', {});
   }
   @Post('send')
-  @Throttle({ default: { ttl: 3600000, limit: 5 } })
+  @Throttle({ default: { ttl: 60000, limit: 20 } })
   async send(@Body() dto: TestMessageDto, @Req() req: AuthenticatedRequest) {
     await this.audit.record({
       actorId: req.user.id,
       action: 'WHATSAPP_TEST_REQUESTED',
       entityType: 'TestMessage',
       entityId: dto.id,
-      metadata: { targetHash: dto.targetId, consent: dto.consent },
+      metadata: { consent: dto.consent },
     });
-    const result = await this.request('/send', dto);
+    const phone = normalizeBrazilianPhone(dto.phone);
+    if (!phone) throw new BadRequestException('Informe um telefone brasileiro válido com DDD.');
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(73421)`;
+        const valueHash = this.crypto.hmac(phone);
+        const contacts = await tx.leadContact.findMany({
+          where: { valueHash },
+          include: { lead: true },
+        });
+        const blocked = await tx.suppression.count({
+          where: {
+            active: true,
+            identityHash: { in: [valueHash, ...contacts.map((c) => c.lead.cpfHash)] },
+            OR: [{ channel: null }, { channel: 'WHATSAPP' }],
+          },
+        });
+        if (blocked || contacts.some((c) => c.status !== 'VALID' || c.lead.status !== 'ACTIVE'))
+          throw new BadRequestException('Destinatário bloqueado ou inativo.');
+        return this.request('/send', { ...dto, phone });
+      },
+      { timeout: 55000, maxWait: 30000 },
+    );
     await this.audit.record({
       actorId: req.user.id,
       action: 'WHATSAPP_TEST_PROCESSED',

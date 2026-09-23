@@ -93,18 +93,25 @@ export class ConversationsController {
   @Post(':id/messages') @RequirePermission('conversation:write') async send(
     @Param('id') id: string,
     @Body() dto: SendConversationMessageDto,
+    @Req() req: AuthenticatedRequest,
   ) {
     const conversation = await this.prisma.conversation.findUniqueOrThrow({ where: { id } });
     const message = await this.prisma.message.create({
       data: {
         conversationId: id,
         contactId: conversation.contactId,
-        provider: 'mock',
+        provider: conversation.channel === 'WHATSAPP' ? 'baileys' : 'mock',
         metadata: { chatwootPending: true },
         direction: 'OUTBOUND',
         status: 'QUEUED',
         body: dto.body,
       },
+    });
+    await this.audit.record({
+      actorId: req.user.id,
+      action: 'MESSAGE_REQUESTED',
+      entityType: 'Message',
+      entityId: message.id,
     });
     await this.queue.add(
       'send-message',

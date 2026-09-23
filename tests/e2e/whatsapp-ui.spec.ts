@@ -1,0 +1,34 @@
+import { expect, test } from '@playwright/test';
+test('public landing, dark mode, command palette and WhatsApp readiness', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /Sua operação/ })).toBeVisible();
+  await page.screenshot({ path: 'test-results/landing-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: 'test-results/landing-mobile.png', fullPage: true });
+  await page.goto('/login');
+  await page.getByLabel('E-mail', { exact: true }).fill('admin@nexacred.local');
+  await page.getByLabel('Senha', { exact: true }).fill('DevOnly-ChangeMe123!');
+  await page.getByRole('button', { name: 'Entrar no painel' }).click();
+  await expect(page).toHaveURL(/dashboard/);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('button', { name: 'Ativar tema escuro' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.screenshot({ path: 'test-results/dashboard-dark.png', fullPage: true });
+  await page.keyboard.press('Control+k');
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByLabel('Buscar página ou lead').fill('WhatsApp');
+  await page.getByRole('button', { name: 'Central WhatsApp', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Boas conversas começam aqui.' })).toBeVisible();
+  await expect(page.getByLabel('Número do destinatário')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Enviar mensagem de teste', exact: true })).toBeDisabled();
+  await page.screenshot({ path: 'test-results/whatsapp-dark.png', fullPage: true });
+  await page.getByRole('button', { name: 'Ativar tema claro' }).click();
+  await page.screenshot({ path: 'test-results/whatsapp-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: 'test-results/whatsapp-mobile.png', fullPage: true });
+  // Deliberately never click Send: this suite must not message external recipients.
+});

@@ -13,7 +13,7 @@ import {
 } from 'class-validator';
 export class CreateCampaignDto {
   @IsString() @MinLength(2) name!: string;
-  @IsIn(['SMS', 'EMAIL']) channel!: 'SMS' | 'EMAIL';
+  @IsIn(['SMS', 'EMAIL', 'WHATSAPP']) channel!: 'SMS' | 'EMAIL' | 'WHATSAPP';
   @IsUUID() templateId!: string;
   @IsUUID() segmentId!: string;
   @Type(() => Number) @IsInt() @Min(1) hourlyLimit = 100;

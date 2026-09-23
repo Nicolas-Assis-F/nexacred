@@ -2,7 +2,7 @@ export type ProviderMessageStatus = 'SENT' | 'DELIVERED' | 'FAILED' | 'INBOUND_R
 
 export interface SendMessageInput {
   idempotencyKey: string;
-  channel: 'SMS' | 'EMAIL';
+  channel: 'SMS' | 'EMAIL' | 'WHATSAPP';
   to: string;
   body: string;
   subject?: string;

@@ -45,5 +45,5 @@ test('dashboard, responsive navigation and XLSB upload wizard', async ({ page })
     .toBe('COMPLETED');
   await page.screenshot({ path: 'test-results/imports-desktop.png', fullPage: true });
   await page.goto('/testing');
-  await expect(page.getByRole('heading', { name: 'Ative seu ambiente de testes' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Boas conversas começam aqui.' })).toBeVisible();
 });

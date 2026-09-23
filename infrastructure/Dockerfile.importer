@@ -3,6 +3,7 @@ WORKDIR /app/workers/importer
 COPY workers/importer/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY workers/importer .
+COPY fixtures /app/fixtures
 COPY infrastructure/entrypoint.sh /app/entrypoint.sh
 ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["sh", "/app/entrypoint.sh"]

@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 export const marketingPurpose = 'CREDIT_MARKETING';
-export async function contactFacts(db: PrismaClient | Prisma.TransactionClient, leadId: string, contactId: string, channel: 'SMS' | 'EMAIL') {
+export async function contactFacts(db: PrismaClient | Prisma.TransactionClient, leadId: string, contactId: string, channel: 'SMS' | 'EMAIL' | 'WHATSAPP') {
  const lead = await db.lead.findUniqueOrThrow({where:{id:leadId}});
  const contact = await db.leadContact.findUniqueOrThrow({where:{id:contactId}});
  const [suppressed,consents] = await Promise.all([

@@ -1,68 +1,51 @@
 import { createServer } from 'node:http';
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, writeFile, rename, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
+  makeCacheableSignalKeyStore,
   type WASocket,
 } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import pino from 'pino';
-import { classify, maskPhone } from '@nexacred/shared';
-import { allowedNumbers, canTest } from './policy.js';
+import { classify, EncryptionService, maskPhone } from '@nexacred/shared';
+import { allowedNumbers } from './policy.js';
+import { dispatch, DispatchError, type Attempt } from './dispatch.js';
+
+// libsignal 6 writes complete session keys through console.info/warn/error.
+// This isolated transport process uses pino for safe operational messages instead.
+for (const method of ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const) {
+  console[method] = () => undefined;
+}
 
 const enabled = process.env.WHATSAPP_LAB_ENABLED === 'true';
 const secret = process.env.MOCK_WEBHOOK_SECRET ?? '';
 if (secret.length < 32) throw new Error('Internal service key missing');
+const crypto = new EncryptionService(
+  process.env.PII_ENCRYPTION_KEY ?? '',
+  process.env.PII_HMAC_SECRET ?? '',
+);
 const allowlist = allowedNumbers(process.env.WHATSAPP_TEST_NUMBERS ?? '');
 const directory = resolve(process.env.WHATSAPP_DATA_DIR ?? '/data');
 const authDirectory = resolve(directory, 'auth');
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
-// The upstream protocol logger can contain remote identities; do not forward it.
 const protocolLogger = pino({ level: 'silent' });
-type Attempt = {
-  id: string;
-  targetHash: string;
-  at: number;
-  status: 'PENDING' | 'SENT' | 'DELIVERED' | 'READ' | 'UNCERTAIN';
-  providerId?: string;
-};
-type State = { attempts: Attempt[]; suppressed: string[] };
-let state: State = { attempts: [], suppressed: [] };
+type BridgeEvent = { id: string; encrypted: string };
+type State = { attempts: Attempt[]; suppressed: string[]; events: BridgeEvent[] };
+let state: State = { attempts: [], suppressed: [], events: [] };
 let socket: WASocket | undefined;
 let status = 'DISCONNECTED';
 let qr: string | null = null;
 let qrExpiresAt: number | null = null;
-let note = 'Conecte seu número para começar.';
+let note = 'Conecte seu WhatsApp para começar.';
 let queue = Promise.resolve();
 let stopped = false;
 let reconnect: ReturnType<typeof setTimeout> | undefined;
+let reconnectCount = 0;
 const hash = (s: string) => createHmac('sha256', secret).update(s).digest('hex');
 const statePath = resolve(directory, 'lab-state.json');
-const DEFAULT_TEST_MESSAGE =
-  'NexaCred: mensagem de teste de conexão solicitada por você. Nenhuma oferta está sendo enviada.';
-const OPT_OUT_FOOTER = 'Para interromper os testes, responda SAIR.';
-const MAX_MESSAGE_LENGTH = 700;
-// Builds the outbound text: uses an optional operator-provided message (so the team can
-// preview the real first-contact copy), always appending the opt-out line if it is missing.
-function buildMessage(custom: unknown): string {
-  if (custom === undefined || custom === null || custom === '')
-    return `${DEFAULT_TEST_MESSAGE} ${OPT_OUT_FOOTER}`;
-  if (typeof custom !== 'string') throw new Error('Mensagem de teste inválida.');
-  // Strip control characters that could break the transport, keeping tab/newline/return.
-  const cleaned = [...custom]
-    .filter((ch) => {
-      const code = ch.codePointAt(0) ?? 0;
-      return code === 9 || code === 10 || code === 13 || code >= 32;
-    })
-    .join('')
-    .trim();
-  if (!cleaned) throw new Error('Escreva a mensagem de teste ou use a padrão.');
-  if (cleaned.length > MAX_MESSAGE_LENGTH)
-    throw new Error(`A mensagem de teste deve ter até ${MAX_MESSAGE_LENGTH} caracteres.`);
-  return /\bSAIR\b/i.test(cleaned) ? cleaned : `${cleaned}\n\n${OPT_OUT_FOOTER}`;
-}
 async function persist() {
   await writeFile(statePath + '.tmp', JSON.stringify(state), { mode: 0o600 });
   await rename(statePath + '.tmp', statePath);
@@ -78,11 +61,12 @@ function serialize<T>(work: () => Promise<T>): Promise<T> {
 await mkdir(directory, { recursive: true, mode: 0o700 });
 try {
   state = JSON.parse(await readFile(statePath, 'utf8')) as State;
+  state.events ??= [];
   for (const a of state.attempts) if (a.status === 'PENDING') a.status = 'UNCERTAIN';
   await persist();
 } catch (e) {
   if ((e as NodeJS.ErrnoException).code !== 'ENOENT')
-    throw new Error('Test ledger cannot be loaded; refusing to send');
+    throw new Error('Ledger cannot be loaded; refusing to send');
 }
 function summary() {
   return {
@@ -93,54 +77,90 @@ function summary() {
     note,
     allowlist: allowlist.map((p) => ({ id: hash(p), label: maskPhone(p) })),
     attempts: state.attempts
-      .slice(-20)
+      .slice(-30)
       .reverse()
       .map((a) => ({
         id: a.id,
         at: a.at,
         status: a.status,
-        target: maskPhone(allowlist.find((p) => hash(p) === a.targetHash) ?? ''),
+        target: a.target ?? maskPhone(allowlist.find((p) => hash(p) === a.targetHash) ?? ''),
+        kind: a.kind ?? 'TEST',
       })),
     limits: { hourly: 5, daily: 20 },
   };
 }
+function scheduleReconnect() {
+  if (stopped || reconnect) return;
+  const delay = Math.min(30000, 1500 * 2 ** Math.min(reconnectCount++, 5));
+  note = 'Restabelecendo a conexão automaticamente…';
+  reconnect = setTimeout(() => {
+    reconnect = undefined;
+    void serialize(connect).catch(() => scheduleReconnect());
+  }, delay);
+}
+function appendEvent(id: string, event: Record<string, unknown>) {
+  if (!state.events.some((e) => e.id === id))
+    state.events.push({
+      id,
+      encrypted: crypto.encrypt(
+        JSON.stringify({ ...event, eventId: id, occurredAt: new Date().toISOString() }),
+      ),
+    });
+}
 async function connect() {
-  if (!enabled) throw new Error('Habilite WHATSAPP_LAB_ENABLED no servidor.');
+  if (!enabled) throw new DispatchError('DISABLED', 'WhatsApp desativado no servidor.');
   if (socket || status === 'CONNECTING') return;
+  if (reconnect) clearTimeout(reconnect);
+  reconnect = undefined;
   stopped = false;
   status = 'CONNECTING';
   qr = null;
-  note = 'Preparando conexão…';
+  note = 'Preparando conexão segura…';
   try {
     const { state: auth, saveCreds } = await useMultiFileAuthState(authDirectory);
     const client = makeWASocket({
-      auth,
+      auth: { creds: auth.creds, keys: makeCacheableSignalKeyStore(auth.keys, protocolLogger) },
       logger: protocolLogger,
       markOnlineOnConnect: false,
       syncFullHistory: false,
-      browser: ['NexaCred Test Lab', 'Chrome', '1.0.0'],
-      getMessage: async () => undefined,
+      browser: ['NexaCred', 'Chrome', '1.0.0'],
+      connectTimeoutMs: 30000,
+      defaultQueryTimeoutMs: 8000,
+      qrTimeout: 45000,
+      getMessage: async (key) => {
+        const attempt = state.attempts.find((a) => a.providerId === key.id);
+        return attempt?.bodyEncrypted
+          ? { conversation: crypto.decrypt(attempt.bodyEncrypted) }
+          : undefined;
+      },
     });
     socket = client;
     client.ev.on('creds.update', () => {
       void serialize(saveCreds).catch(() => {
-        note = 'Falha ao salvar sessão. Reconecte.';
+        note = 'Não foi possível salvar a sessão.';
       });
     });
     client.ev.on('connection.update', (update) => {
+      // A closed socket must not be considered connected while sends are queued.
+      if (socket === client && update.connection === 'close') status = 'DISCONNECTED';
       void serialize(async () => {
         if (socket !== client) return;
         if (update.qr) {
-          qr = await QRCode.toDataURL(update.qr, { margin: 2, width: 264 });
+          qr = await QRCode.toDataURL(update.qr, {
+            margin: 3,
+            width: 320,
+            errorCorrectionLevel: 'M',
+          });
           qrExpiresAt = Date.now() + 45000;
           status = 'QR_READY';
-          note = 'No WhatsApp, abra Aparelhos conectados e escaneie o QR Code.';
+          note = 'Abra Aparelhos conectados no WhatsApp e escaneie o QR.';
         }
         if (update.connection === 'open') {
           status = 'CONNECTED';
           qr = null;
           qrExpiresAt = null;
-          note = 'Conexão pronta para testes manuais.';
+          reconnectCount = 0;
+          note = 'Seu WhatsApp está pronto para enviar e receber mensagens.';
         }
         if (update.connection === 'close') {
           socket = undefined;
@@ -150,51 +170,59 @@ async function connect() {
             update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined
           )?.output?.statusCode;
           if (code === DisconnectReason.loggedOut) {
-            status = 'DISCONNECTED';
-            note = 'Sessão encerrada. Conecte novamente.';
+            stopped = true;
+            note = 'Sessão encerrada no aparelho. Conecte novamente.';
             await rm(authDirectory, { recursive: true, force: true });
-          } else if (!stopped && code === DisconnectReason.restartRequired) {
-            status = 'DISCONNECTED';
-            reconnect = setTimeout(
-              () =>
-                void connect().catch(() => {
-                  status = 'ERROR';
-                  note = 'Não foi possível reconectar.';
-                }),
-              1500,
-            );
-          } else {
-            status = 'DISCONNECTED';
-            note = 'Conexão interrompida. Clique em conectar para tentar novamente.';
-          }
+          } else if (code === DisconnectReason.connectionReplaced) {
+            stopped = true;
+            note = 'Esta sessão foi aberta em outro serviço. Reconecte quando estiver livre.';
+          } else scheduleReconnect();
         }
       }).catch(() => {
-        note = 'Erro na conexão. Tente reconectar.';
+        status = 'ERROR';
+        note = 'Não foi possível atualizar a conexão.';
       });
     });
     client.ev.on('messages.upsert', (event) => {
-      void serialize(async () => {
-        for (const message of event.messages) {
-          if (message.key.fromMe) continue;
+      for (const message of event.messages) {
+        if (message.key.fromMe || !message.key.id) continue;
+        // Resolve LID before persisting. Group/broadcast messages are not customer replies.
+        void (async () => {
           const remote = message.key.remoteJid ?? '';
-          const alternative = (message.key as { remoteJidAlt?: string }).remoteJidAlt;
+          if (remote.endsWith('@g.us') || remote.endsWith('@broadcast')) return;
           const jid = remote.endsWith('@s.whatsapp.net')
             ? remote
-            : (alternative ??
+            : (message.key.remoteJidAlt ??
               (remote.endsWith('@lid')
                 ? await client.signalRepository.lidMapping.getPNForLID(remote)
                 : null));
-          if (!jid?.endsWith('@s.whatsapp.net')) continue;
+          if (!jid?.endsWith('@s.whatsapp.net')) return;
           const phone = '+' + jid.split('@')[0]!.split(':')[0]!;
-          if (!allowlist.includes(phone)) continue;
           const text =
             message.message?.conversation ?? message.message?.extendedTextMessage?.text ?? '';
-          if (classify(text) === 'OPT_OUT' && !state.suppressed.includes(hash(phone))) {
-            state.suppressed.push(hash(phone));
-            await persist();
+          if (!text) return;
+          const matched = state.attempts.find((a) => a.jidHash === hash(phone));
+          const originalPhone = matched?.phoneEncrypted
+            ? crypto.decrypt(matched.phoneEncrypted)
+            : phone;
+          if (classify(text) === 'OPT_OUT') {
+            // Immediately visible to the gate, even when an outbound lookup is in flight.
+            for (const identity of [hash(phone), hash(originalPhone)])
+              if (!state.suppressed.includes(identity)) state.suppressed.push(identity);
           }
-        }
-      }).catch(() => logger.error('Unable to persist incoming opt-out'));
+          await serialize(async () => {
+            appendEvent('in-' + message.key.id, {
+              type: 'INBOUND_REPLY',
+              from: originalPhone,
+              body: text.slice(0, 4000),
+            });
+            await persist();
+          });
+        })().catch(() => {
+          status = 'ERROR';
+          logger.error('Unable to persist incoming message; sending blocked');
+        });
+      }
     });
     client.ev.on('messages.update', (events) => {
       void serialize(async () => {
@@ -204,6 +232,8 @@ async function connect() {
           const n = event.update.status;
           if (n && n >= 4) a.status = 'READ';
           else if (n && n >= 3 && a.status !== 'READ') a.status = 'DELIVERED';
+          if (n && n >= 3 && a.kind === 'CAMPAIGN')
+            appendEvent(`delivery-${a.id}`, { type: 'DELIVERED', messageId: a.providerId });
         }
         await persist();
       }).catch(() => logger.error('Unable to persist receipt'));
@@ -211,60 +241,38 @@ async function connect() {
   } catch {
     socket = undefined;
     status = 'ERROR';
-    note = 'Falha ao iniciar sessão. Confira a rede e tente novamente.';
-    throw new Error(note);
+    note = 'Falha de conexão. Verifique a rede.';
+    throw new DispatchError('CONNECTION_FAILED', note);
   }
 }
-async function send(input: Record<string, unknown>) {
-  if (typeof input.id !== 'string' || !/^[0-9a-f-]{36}$/i.test(input.id))
-    throw new Error('Identificador de teste inválido.');
-  const previous = state.attempts.find((a) => a.id === input.id);
-  if (previous) return previous;
-  const phone = allowlist.find((p) => hash(p) === input.targetId);
-  if (!phone) throw new Error('Número não cadastrado para testes.');
-  const text = buildMessage(input.message);
-  const now = Date.now();
-  const result = canTest({
+async function send(input: Record<string, unknown>, kind: 'TEST' | 'CAMPAIGN') {
+  const legacyPhone = allowlist.find((p) => hash(p) === input.targetId);
+  const attempt = await dispatch({ ...input, phone: input.phone ?? legacyPhone }, kind, {
+    attempts: state.attempts,
     enabled,
-    connected: status === 'CONNECTED' && !!socket,
-    phone,
-    allowlist,
-    consent: input.consent === true,
-    suppressed: state.suppressed.includes(hash(phone)),
-    hourly: state.attempts.filter((a) => a.at > now - 3600000).length,
-    daily: state.attempts.filter((a) => a.at > now - 86400000).length,
+    connected: () => status === 'CONNECTED' && !!socket,
+    suppressed: (identity) => state.suppressed.includes(identity),
+    hash,
+    encrypt: (s) => crypto.encrypt(s),
+    persist,
+    resolve: async (phone) => {
+      const result = await socket!.onWhatsApp(phone.slice(1));
+      return result?.find((r) => r.exists)?.jid;
+    },
+    send: async (jid, text, messageId) => {
+      await socket!.sendMessage(jid, { text }, { messageId });
+    },
   });
-  if (!result.allowed) throw new Error('Envio bloqueado: ' + result.reasons.join(', '));
-  const attempt: Attempt = { id: input.id, targetHash: hash(phone), at: now, status: 'PENDING' };
-  state.attempts.push(attempt);
-  await persist();
-  // The message is operator-authored but always carries the opt-out line; the lab stays
-  // manual and allowlisted so it never becomes an automated credit campaign channel.
-  try {
-    const response = await socket!.sendMessage(
-      phone.slice(1) + '@s.whatsapp.net',
-      { text },
-      { messageId: 'NEXA' + randomUUID().replaceAll('-', '').toUpperCase() },
-    );
-    attempt.status = 'SENT';
-    if (response?.key.id) attempt.providerId = response.key.id;
-    await persist();
-    logger.info({ testId: attempt.id }, 'manual test accepted');
-  } catch {
-    attempt.status = 'UNCERTAIN';
-    await persist();
-    note = 'Resultado incerto. Confira o aparelho antes de iniciar outro teste.';
-  }
-  return attempt;
+  return { id: attempt.id, status: attempt.status };
 }
 const server = createServer(async (req, res) => {
   res.setHeader('content-type', 'application/json');
   res.setHeader('cache-control', 'no-store');
-  const supplied = Buffer.from(req.headers.authorization?.replace(/^Bearer /, '') ?? '');
   if (req.url === '/health') {
-    res.end(JSON.stringify({ status: 'ok' }));
+    res.end('{"status":"ok"}');
     return;
   }
+  const supplied = Buffer.from(req.headers.authorization?.replace(/^Bearer /, '') ?? '');
   if (
     supplied.length !== Buffer.byteLength(secret) ||
     !timingSafeEqual(supplied, Buffer.from(secret))
@@ -278,6 +286,16 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify(summary()));
       return;
     }
+    if (req.method === 'GET' && req.url === '/events') {
+      const payload = JSON.stringify(state.events.slice(0, 100));
+      res.end(
+        JSON.stringify({
+          payload,
+          signature: createHmac('sha256', secret).update(payload).digest('hex'),
+        }),
+      );
+      return;
+    }
     if (req.method !== 'POST') {
       res.writeHead(404);
       res.end('{}');
@@ -286,7 +304,8 @@ const server = createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) {
       raw += String(chunk);
-      if (Buffer.byteLength(raw) > 4096) throw new Error('Payload muito grande.');
+      if (Buffer.byteLength(raw) > 24000)
+        throw new DispatchError('PAYLOAD_TOO_LARGE', 'Mensagem muito grande.');
     }
     const body = JSON.parse(raw || '{}') as Record<string, unknown>;
     const result = await serialize(async () => {
@@ -297,6 +316,7 @@ const server = createServer(async (req, res) => {
       if (req.url === '/disconnect') {
         stopped = true;
         if (reconnect) clearTimeout(reconnect);
+        reconnect = undefined;
         const client = socket;
         socket = undefined;
         if (client) {
@@ -306,23 +326,49 @@ const server = createServer(async (req, res) => {
         status = 'DISCONNECTED';
         qr = null;
         qrExpiresAt = null;
+        note = 'Aparelho desconectado.';
         await rm(authDirectory, { recursive: true, force: true });
         return summary();
       }
-      if (req.url === '/send') return send(body);
-      throw new Error('Ação não encontrada.');
+      if (req.url === '/send') return send(body, 'TEST');
+      if (req.url === '/dispatch') return send(body, 'CAMPAIGN');
+      if (req.url === '/events/ack' && Array.isArray(body.ids)) {
+        state.events = state.events.filter((e) => !(body.ids as unknown[]).includes(e.id));
+        await persist();
+        return { ok: true };
+      }
+      throw new DispatchError('NOT_FOUND', 'Ação não encontrada.');
     });
     res.end(JSON.stringify(result));
   } catch (error) {
-    res.writeHead(400);
+    res.writeHead(
+      error instanceof DispatchError &&
+        ['NOT_CONNECTED', 'RATE_LIMIT', 'LOOKUP_UNAVAILABLE'].includes(error.code)
+        ? 503
+        : 400,
+    );
+    // Never serialize upstream errors (they can contain phone numbers or session keys).
     res.end(
-      JSON.stringify({ message: error instanceof Error ? error.message : 'Falha no laboratório' }),
+      JSON.stringify({
+        code: error instanceof DispatchError ? error.code : 'BRIDGE_ERROR',
+        message:
+          error instanceof DispatchError
+            ? error.message
+            : 'Não foi possível concluir. Consulte o histórico antes de repetir.',
+      }),
     );
   }
 });
-server.listen(3010, '0.0.0.0', () =>
-  logger.info('WhatsApp lab ready; no automatic connection or send'),
-);
+server.listen(3010, '0.0.0.0', () => logger.info('WhatsApp bridge ready'));
+if (
+  enabled &&
+  (await stat(resolve(authDirectory, 'creds.json')).then(
+    () => true,
+    () => false,
+  ))
+) {
+  void serialize(connect).catch(() => scheduleReconnect());
+}
 process.on('SIGTERM', () => {
   stopped = true;
   if (reconnect) clearTimeout(reconnect);

@@ -6,7 +6,7 @@ import { PermissionGuard, RequirePermission } from '../common/rbac.js';
 import type { AuthenticatedRequest } from '../common/request-context.js';
 class ConsentDto {
   @IsUUID() contactId!: string;
-  @IsIn(['SMS', 'EMAIL']) channel!: 'SMS' | 'EMAIL';
+  @IsIn(['SMS', 'EMAIL', 'WHATSAPP']) channel!: 'SMS' | 'EMAIL' | 'WHATSAPP';
   @IsIn(['GRANTED', 'REVOKED']) status!: 'GRANTED' | 'REVOKED';
   @IsString() @MinLength(3) source!: string;
   @IsString() @MinLength(5) proof!: string;
@@ -22,7 +22,7 @@ export class ConsentsController {
     @Req() req: AuthenticatedRequest,
   ) {
     const contact = await this.prisma.leadContact.findFirst({
-      where: { id: dto.contactId, leadId: id, type: dto.channel === 'SMS' ? 'PHONE' : 'EMAIL' },
+      where: { id: dto.contactId, leadId: id, type: dto.channel === 'EMAIL' ? 'EMAIL' : 'PHONE' },
     });
     if (!contact) throw new BadRequestException('Contato incompatível');
     if (dto.status === 'GRANTED' && (!dto.grantedAt || new Date(dto.grantedAt) > new Date()))
