@@ -75,6 +75,24 @@ export default function DashboardPage() {
     { name: 'Falhas', value: t?.failed ?? 0, color: '#dc8c85' },
   ];
   const hasMessages = slices.some((s) => s.value > 0);
+  const convoConfig: Array<[string, string, string]> = [
+    ['NEW', 'Novas', '#94a3b8'],
+    ['INTERESTED', 'Interessados', '#0f766e'],
+    ['QUALIFYING', 'Em qualificação', '#0891b2'],
+    ['QUALIFIED', 'Qualificados', '#15803d'],
+    ['WAITING_HUMAN', 'Aguardando atendente', '#b45309'],
+    ['NOT_INTERESTED', 'Sem interesse', '#a1a1aa'],
+    ['OPT_OUT', 'Opt-out', '#dc2626'],
+    ['CLOSED', 'Encerradas', '#64748b'],
+  ];
+  const convoMap = new Map((data?.conversationStatuses ?? []).map((c) => [c.status, c.count]));
+  const convoRows = convoConfig
+    .map(([key, label, color]) => ({ label, color, count: convoMap.get(key) ?? 0 }))
+    .filter((r) => r.count > 0);
+  const convoTotal = convoRows.reduce((sum, r) => sum + r.count, 0);
+  const convoMax = Math.max(1, ...convoRows.map((r) => r.count));
+  const responseRate =
+    t && t.sent ? Math.min(100, ((t.responses ?? 0) / t.sent) * 100) : null;
   return (
     <div className="space-y-6">
       <section className="flex flex-wrap items-center justify-between gap-4">
@@ -318,6 +336,91 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+        </Card>
+      </div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.9fr)_minmax(290px,1fr)]">
+        <Card className="p-5 md:p-6">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="text-sm font-semibold">Funil de conversas</h2>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Como as respostas evoluem no atendimento
+              </p>
+            </div>
+            <span className="rounded-md bg-slate-50 px-2 py-1 text-[10px] text-slate-500">
+              {number(convoTotal)} conversas
+            </span>
+          </div>
+          {convoRows.length ? (
+            <div className="mt-5 space-y-3">
+              {convoRows.map((r) => (
+                <div key={r.label} className="flex items-center gap-3">
+                  <span className="w-40 shrink-0 text-xs text-slate-500">{r.label}</span>
+                  <div className="h-6 flex-1 overflow-hidden rounded-md bg-slate-100">
+                    <div
+                      className="flex h-full items-center rounded-md px-2 text-[10px] font-semibold text-white"
+                      style={{
+                        width: Math.max(8, (r.count / convoMax) * 100) + '%',
+                        background: r.color,
+                      }}
+                    >
+                      {number(r.count)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-6 grid place-items-center py-10 text-center">
+              <MessageCircle size={22} className="mb-3 text-slate-300" />
+              <p className="text-xs text-slate-400">
+                As conversas aparecem aqui assim que os leads respondem.
+              </p>
+            </div>
+          )}
+        </Card>
+        <Card className="p-6">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={17} className="text-teal-600" />
+            <h2 className="text-sm font-semibold">Sinais de compliance</h2>
+          </div>
+          <p className="mt-1 mb-5 text-[11px] text-slate-400">
+            Consentimento, opt-out e taxa de resposta
+          </p>
+          <div className="space-y-4">
+            {[
+              {
+                label: 'Leads elegíveis',
+                value: number(t?.eligibleLeads),
+                hint: 'com contato válido e consentimento',
+              },
+              {
+                label: 'Pedidos de saída (opt-out)',
+                value: number(t?.optOuts),
+                hint: 'no período · viram supressão imediata',
+              },
+              {
+                label: 'Taxa de resposta',
+                value: pct(responseRate),
+                hint: number(t?.responses) + ' respostas recebidas',
+              },
+            ].map((row) => (
+              <div key={row.label} className="rounded-xl bg-slate-50 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-slate-500">{row.label}</p>
+                  <p className="metric-number text-lg font-semibold">{row.value}</p>
+                </div>
+                <p className="mt-1 text-[10px] text-slate-400">{row.hint}</p>
+              </div>
+            ))}
+          </div>
+          <Link
+            href="/suppressions"
+            className="mt-5 flex items-center justify-between text-xs font-medium text-teal-700"
+          >
+            Ver lista de supressões
+            <ArrowRight size={14} />
+          </Link>
         </Card>
       </div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.9fr)_minmax(290px,1fr)]">

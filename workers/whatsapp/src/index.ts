@@ -40,6 +40,29 @@ let stopped = false;
 let reconnect: ReturnType<typeof setTimeout> | undefined;
 const hash = (s: string) => createHmac('sha256', secret).update(s).digest('hex');
 const statePath = resolve(directory, 'lab-state.json');
+const DEFAULT_TEST_MESSAGE =
+  'NexaCred: mensagem de teste de conexão solicitada por você. Nenhuma oferta está sendo enviada.';
+const OPT_OUT_FOOTER = 'Para interromper os testes, responda SAIR.';
+const MAX_MESSAGE_LENGTH = 700;
+// Builds the outbound text: uses an optional operator-provided message (so the team can
+// preview the real first-contact copy), always appending the opt-out line if it is missing.
+function buildMessage(custom: unknown): string {
+  if (custom === undefined || custom === null || custom === '')
+    return `${DEFAULT_TEST_MESSAGE} ${OPT_OUT_FOOTER}`;
+  if (typeof custom !== 'string') throw new Error('Mensagem de teste inválida.');
+  // Strip control characters that could break the transport, keeping tab/newline/return.
+  const cleaned = [...custom]
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0;
+      return code === 9 || code === 10 || code === 13 || code >= 32;
+    })
+    .join('')
+    .trim();
+  if (!cleaned) throw new Error('Escreva a mensagem de teste ou use a padrão.');
+  if (cleaned.length > MAX_MESSAGE_LENGTH)
+    throw new Error(`A mensagem de teste deve ter até ${MAX_MESSAGE_LENGTH} caracteres.`);
+  return /\bSAIR\b/i.test(cleaned) ? cleaned : `${cleaned}\n\n${OPT_OUT_FOOTER}`;
+}
 async function persist() {
   await writeFile(statePath + '.tmp', JSON.stringify(state), { mode: 0o600 });
   await rename(statePath + '.tmp', statePath);
@@ -199,6 +222,7 @@ async function send(input: Record<string, unknown>) {
   if (previous) return previous;
   const phone = allowlist.find((p) => hash(p) === input.targetId);
   if (!phone) throw new Error('Número não cadastrado para testes.');
+  const text = buildMessage(input.message);
   const now = Date.now();
   const result = canTest({
     enabled,
@@ -214,13 +238,12 @@ async function send(input: Record<string, unknown>) {
   const attempt: Attempt = { id: input.id, targetHash: hash(phone), at: now, status: 'PENDING' };
   state.attempts.push(attempt);
   await persist();
-  // A fixed smoke-test message keeps the lab separate from credit campaigns.
+  // The message is operator-authored but always carries the opt-out line; the lab stays
+  // manual and allowlisted so it never becomes an automated credit campaign channel.
   try {
     const response = await socket!.sendMessage(
       phone.slice(1) + '@s.whatsapp.net',
-      {
-        text: 'NexaCred: mensagem de teste de conexão solicitada por você. Nenhuma oferta está sendo enviada. Para interromper os testes, responda SAIR.',
-      },
+      { text },
       { messageId: 'NEXA' + randomUUID().replaceAll('-', '').toUpperCase() },
     );
     attempt.status = 'SENT';

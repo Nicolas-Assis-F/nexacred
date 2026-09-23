@@ -13,6 +13,9 @@ type Lab = {
   allowlist: Array<{ id: string; label: string }>;
   attempts: Array<{ id: string; at: number; status: string; target: string }>;
 };
+const OPT_OUT_FOOTER = 'Para interromper os testes, responda SAIR.';
+const DEFAULT_MESSAGE =
+  'Olá! Aqui é a equipe NexaCred. Estamos testando nosso canal de atendimento no WhatsApp. Podemos seguir por aqui?';
 const labels: Record<string, string> = {
   CONNECTED: 'Conectado',
   DISCONNECTED: 'Desconectado',
@@ -32,7 +35,14 @@ export default function Testing() {
     [notice, setNotice] = useState(''),
     [target, setTarget] = useState(''),
     [consent, setConsent] = useState(false),
+    [message, setMessage] = useState(DEFAULT_MESSAGE),
     [requestId, setRequestId] = useState<string>();
+  const trimmed = message.trim();
+  const preview = !trimmed
+    ? DEFAULT_MESSAGE + '\n\n' + OPT_OUT_FOOTER
+    : /\bSAIR\b/i.test(trimmed)
+      ? trimmed
+      : trimmed + '\n\n' + OPT_OUT_FOOTER;
   async function action(name: string) {
     setBusy(true);
     setFailure('');
@@ -57,6 +67,7 @@ export default function Testing() {
         id,
         targetId: target,
         consent,
+        message: trimmed || undefined,
       });
       setNotice(
         `Teste: ${labels[result.status] ?? result.status}. Confira o histórico e o aparelho de destino.`,
@@ -202,11 +213,26 @@ export default function Testing() {
                 Cadastre um número em WHATSAPP_TEST_NUMBERS e reinicie os serviços.
               </p>
             )}
-            <p className="mb-3 mt-6 text-sm font-medium">Prévia da mensagem</p>
-            <div className="rounded-2xl rounded-tr-sm border border-emerald-100 bg-emerald-50 p-5 text-sm leading-7 text-emerald-950">
-              NexaCred: mensagem de teste de conexão solicitada por você. Nenhuma oferta está sendo
-              enviada. Para interromper os testes, responda SAIR.
+            <label className="mb-2 mt-6 flex items-center justify-between text-sm font-medium">
+              Mensagem de teste
+              <span className="text-xs font-normal text-slate-400">{trimmed.length}/700</span>
+            </label>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value.slice(0, 700))}
+              rows={4}
+              disabled={busy || !!requestId}
+              aria-label="Mensagem de teste"
+              placeholder="Escreva a mensagem que quer testar…"
+              className="w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm leading-6 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+            />
+            <p className="mb-2 mt-4 text-xs font-medium text-slate-500">Prévia enviada ao aparelho</p>
+            <div className="whitespace-pre-line rounded-2xl rounded-tr-sm border border-emerald-100 bg-emerald-50 p-5 text-sm leading-7 text-emerald-950">
+              {preview}
             </div>
+            <p className="mt-2 text-xs text-slate-400">
+              A linha “responda SAIR” é adicionada automaticamente quando você não a inclui.
+            </p>
             <label className="my-6 flex items-start gap-3 text-sm leading-6 text-slate-600">
               <input
                 type="checkbox"

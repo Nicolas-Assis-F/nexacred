@@ -1,7 +1,9 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Inbox } from 'lucide-react';
 import { api } from '@/lib/client';
 import { Button, Card, Input } from './ui';
+import { Status } from './status';
 export type Row = Record<string, unknown>;
 export function useResource<T>(path: string, refreshMs = 0) {
   const [data, setData] = useState<T>();
@@ -91,12 +93,26 @@ export function Select({
     </label>
   );
 }
-export function Title({ title, subtitle }: { title: string; subtitle: string }) {
+export function Title({
+  title,
+  subtitle,
+  action,
+}: {
+  title: string;
+  subtitle: string;
+  action?: React.ReactNode;
+}) {
   return (
-    <header className="mb-8">
-      <div className="text-xs text-slate-500 mb-3">Workspace / {title}</div>
-      <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
-      <p className="mt-2 text-sm text-slate-500">{subtitle}</p>
+    <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <p className="eyebrow mb-2">NexaCred workspace</p>
+        <h1 className="text-[28px] font-semibold tracking-tight">
+          {title}
+          <span className="text-teal-600">.</span>
+        </h1>
+        <p className="mt-1.5 text-[13px] text-slate-500">{subtitle}</p>
+      </div>
+      {action}
     </header>
   );
 }
@@ -110,38 +126,47 @@ export function DataTable({
   onClick?: (row: Row) => void;
 }) {
   return (
-    <Card className="overflow-x-auto">
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr>
-            {columns.map(([key, label]) => (
-              <th
-                key={key}
-                className="p-4 text-xs font-medium text-slate-500 uppercase border-b border-slate-200"
-              >
-                {label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr
-              key={String(row.id ?? i)}
-              onClick={() => onClick?.(row)}
-              className={`border-b border-slate-200/60 hover:bg-slate-50 ${onClick ? 'cursor-pointer' : ''}`}
-            >
-              {columns.map(([key]) => (
-                <td className="p-4 max-w-sm truncate" key={key}>
-                  {format(row[key])}
-                </td>
+    <Card className="overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-slate-100 bg-slate-50/60 text-[10px] uppercase tracking-wide text-slate-400">
+            <tr>
+              {columns.map(([key, label]) => (
+                <th key={key} className="px-5 py-3 font-medium">
+                  {label}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr
+                key={String(row.id ?? i)}
+                onClick={() => onClick?.(row)}
+                className={`border-b border-slate-100 last:border-0 transition hover:bg-slate-50 ${onClick ? 'cursor-pointer' : ''}`}
+              >
+                {columns.map(([key], c) => (
+                  <td
+                    className={`px-5 py-3.5 max-w-sm truncate ${c === 0 ? 'font-medium text-slate-700' : 'text-slate-500'}`}
+                    key={key}
+                  >
+                    {key === 'status' && typeof row[key] === 'string' ? (
+                      <Status value={row[key] as string} />
+                    ) : (
+                      format(row[key])
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {!rows.length && (
-        <p className="p-12 text-center text-slate-500">Nenhum registro encontrado.</p>
+        <div className="px-6 py-14 text-center">
+          <Inbox size={24} className="mx-auto mb-3 text-slate-300" />
+          <p className="text-xs text-slate-400">Nenhum registro encontrado.</p>
+        </div>
       )}
     </Card>
   );

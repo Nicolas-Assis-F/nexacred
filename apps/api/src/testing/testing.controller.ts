@@ -10,7 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
-import { IsBoolean, IsString, IsUUID, Length } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, IsUUID, Length, MaxLength } from 'class-validator';
 import { PermissionGuard, RequirePermission } from '../common/rbac.js';
 import { AuditService } from '../common/audit.service.js';
 import type { AuthenticatedRequest } from '../common/request-context.js';
@@ -18,6 +18,7 @@ class TestMessageDto {
   @IsUUID() id!: string;
   @IsString() @Length(64, 64) targetId!: string;
   @IsBoolean() consent!: boolean;
+  @IsOptional() @IsString() @MaxLength(700) message?: string;
 }
 @Controller('testing/whatsapp')
 @UseGuards(AuthGuard('jwt'), PermissionGuard)

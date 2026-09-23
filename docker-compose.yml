@@ -28,7 +28,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    ports: ['127.0.0.1:${POSTGRES_PORT:-5432}:5432']
+    # Postgres is reached over the internal network (postgres:5432); not published to the host
+    # by default to avoid clashing with a local Postgres. Access it via:
+    #   docker compose exec postgres psql -U nexacred nexacred
+    # To expose it, set POSTGRES_PORT and add a ports mapping.
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes --maxmemory-policy noeviction
@@ -38,7 +41,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    ports: ['127.0.0.1:${REDIS_PORT:-6379}:6379']
+    # Redis is reached over the internal network (redis:6379); not published to the host by
+    # default to avoid clashing with a local Redis. Inspect it via:
+    #   docker compose exec redis redis-cli
   minio:
     image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
     command: server /data --console-address :9001
@@ -131,7 +136,6 @@ services:
       retries: 5
     restart: unless-stopped
   whatsapp-lab:
-    profiles: [whatsapp-lab]
     build:
       context: .
       dockerfile: infrastructure/Dockerfile.whatsapp

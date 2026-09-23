@@ -1,6 +1,6 @@
 # NexaCred
 
-Gestão de leads, importação XLSB, campanhas e atendimento com NestJS, Next.js, PostgreSQL, Prisma, Redis/BullMQ e Python. Dashboard com métricas reais, filtros de período e interface responsiva. Campanhas usam o provider mock; um laboratório opcional com Baileys permite testes manuais de WhatsApp.
+Gestão de leads, importação XLSB, campanhas e atendimento com NestJS, Next.js, PostgreSQL, Prisma, Redis/BullMQ e Python. Dashboard de analytics com métricas reais, filtros de período, funil de conversas e interface responsiva. Campanhas usam o provider mock; o laboratório com Baileys (habilitado por padrão) permite testes manuais de WhatsApp com mensagem própria.
 
 ## Executar em desenvolvimento
 
@@ -10,13 +10,17 @@ Requisitos: Docker Engine com Compose v2, 6 GB de RAM livres recomendados e espa
 git clone https://github.com/Nicolas-Assis-F/nexacred.git
 cd nexacred
 cp .env.example .env
-docker compose up --build
+make start          # sobe tudo em segundo plano (equivale a: docker compose up --build -d)
 ```
+
+Sem `make`? Use `cp .env.example .env && docker compose up --build`. Rode `make help` para ver todos os atalhos (`start`, `stop`, `logs`, `rebuild`, `reset`, `whatsapp`).
 
 - Painel: http://localhost:3000
 - API / Swagger: http://localhost:3001/docs
 - MinIO: http://localhost:9001
 - Login inicial: `admin@nexacred.local` / `DevOnly-ChangeMe123!`
+
+O seed de desenvolvimento popula leads, uma campanha e ~30 dias de atividade fictícia (mensagens, respostas, opt-outs e funil de conversas) para o dashboard não nascer vazio. Nada disso inicia envio real.
 
 O serviço `secrets` gera chaves aleatórias no primeiro boot; elas ficam no volume `runtime_secrets`. Não apague esse volume: os dados antigos não poderão ser descriptografados sem a chave. Valores explícitos de chaves no ambiente têm precedência. O exemplo `.env` contém apenas credenciais públicas de desenvolvimento. Não publique essa instalação sem trocar credenciais, configurar TLS e desativar o seed.
 
@@ -88,21 +92,25 @@ Um advisory lock no PostgreSQL serializa decisões de envio e processamento de o
 
 ## Testar WhatsApp hoje (Baileys)
 
-O laboratório fica em **Relacionamento → Laboratório** e exige perfil ADMIN. Use números de participantes que autorizaram o teste. No `.env`, configure:
+O laboratório fica em **Relacionamento → Laboratório** e exige perfil ADMIN. Ele já sobe com a stack (`make start`); só falta liberar um número autorizado para enviar. Passo a passo para testar hoje:
 
-```dotenv
-WHATSAPP_LAB_ENABLED=true
-WHATSAPP_TEST_NUMBERS=+5562999991234
-```
+1. No `.env`, informe o seu número (E.164). Até cinco, separados por vírgula:
 
-Substitua o exemplo pelo número real de teste. É possível cadastrar até cinco números brasileiros, separados por vírgula. Depois:
+   ```dotenv
+   WHATSAPP_TEST_NUMBERS=+5562999991234
+   ```
 
-```bash
-docker compose --profile whatsapp-lab up --build -d
-docker compose --profile whatsapp-lab logs -f whatsapp-lab
-```
+2. Reinicie apenas o laboratório para carregar a allowlist:
 
-Abra a tela, clique em **Conectar aparelho**, escaneie o QR em WhatsApp → Aparelhos conectados e escolha o destinatário. Confirme a autorização e envie a mensagem fixa. O histórico diferencia enviado, entregue, lido e resultado incerto. Em caso de timeout, repetir a tentativa usa o mesmo identificador; confira o aparelho antes de iniciar um novo teste. Não há reenvio automático.
+   ```bash
+   make whatsapp          # equivale a: docker compose up --build -d whatsapp-lab
+   make whatsapp-logs     # acompanha a conexão (opcional)
+   ```
+
+3. Abra **Laboratório**, clique em **Conectar aparelho** e escaneie o QR em WhatsApp → Aparelhos conectados.
+4. Escolha o destinatário, **escreva a mensagem que quer testar** (ou use a padrão), confirme a autorização e envie.
+
+A linha “responda SAIR” é sempre anexada quando você não a inclui. O histórico diferencia enviado, entregue, lido e resultado incerto. Em caso de timeout, repetir a tentativa usa o mesmo identificador; confira o aparelho antes de iniciar um novo teste. Não há reenvio automático.
 
 Limites globais do laboratório: 5 tentativas/hora e 20/dia, em janelas móveis. A lista autorizada, o consentimento e as supressões são verificados no servidor. Respostas de opt-out de destinatários identificados são persistidas. Mensagens com identidade LID sem telefone alternativo não são atribuídas: valide o recebimento de SAIR no aparelho antes de ampliar uso. Campanhas e conversas existentes continuam no mock; não são redirecionadas ao WhatsApp nem ao Chatwoot.
 
